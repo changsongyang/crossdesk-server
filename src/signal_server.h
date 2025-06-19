@@ -9,7 +9,7 @@
 #include <websocketpp/config/asio_no_tls.hpp>
 #include <websocketpp/server.hpp>
 
-#include "client_id_generator.h"
+#include "device_db_manager.h"
 #include "transmission_manager.h"
 
 using nlohmann::json;
@@ -48,7 +48,7 @@ class SignalServer {
 
  private:
   TransmissionManager transmission_manager_;
-  ClientIdGenerator client_id_generator_;
+  std::unique_ptr<DeviceDBManager> device_db_manager_;
 };
 
 #endif

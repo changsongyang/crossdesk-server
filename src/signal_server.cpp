@@ -47,6 +47,8 @@ SignalServer::~SignalServer() {}
 
 bool SignalServer::on_open(websocketpp::connection_hdl hdl) {
   ws_connections_[hdl] = ws_connection_id_++;
+
+  device_db_manager_ = std::make_unique<DeviceDBManager>("");
   return true;
 }
 
@@ -155,7 +157,7 @@ void SignalServer::on_message(websocketpp::connection_hdl hdl,
     case "login"_H: {
       std::string host_id = j["user_id"].get<std::string>();
       if (host_id.empty()) {
-        host_id = client_id_generator_.GeneratorNewId();
+        host_id = "";  // todo
         LOG_INFO("New client, assign id [{}] to it", host_id);
       }
 
