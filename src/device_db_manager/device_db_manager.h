@@ -11,27 +11,41 @@
 
 #include <string>
 
+struct DeviceCredential {
+  std::string device_id;
+  std::string password;
+  bool update;
+};
+
 class DeviceDBManager {
  public:
-  explicit DeviceDBManager(const std::string& dbPath);
+  explicit DeviceDBManager(const std::string& db_path);
   ~DeviceDBManager();
 
   DeviceDBManager(const DeviceDBManager&) = delete;
   DeviceDBManager& operator=(const DeviceDBManager&) = delete;
 
- public:
-  std::string addDevice(const std::string& password);
+  DeviceCredential AddDevice(const std::string& device_id,
+                             const std::string& password);
 
-  bool verifyDevice(const std::string& deviceId, const std::string& password);
-  bool removeDevice(const std::string& deviceId);
+  bool UpdatePassword(const std::string& device_id,
+                      const std::string& new_password);
 
- private:
-  std::string sha256(const std::string& str);
-  void initDB();
-  std::string generateDeviceId();
+  bool VerifyDevice(const std::string& device_id, const std::string& password);
+  bool RemoveDevice(const std::string& device_id);
 
  private:
-  sqlite3* db;
+  void InitDB();
+  std::string Sha256(const std::string& str);
+  std::string GenerateDeviceId();
+  std::string GeneratePassword();
+  std::string GenerateSalt();
+
+  std::string HashPasswordWithSalt(const std::string& salt,
+                                   const std::string& password);
+
+ private:
+  sqlite3* db_;
 };
 
 #endif  // _DEVICE_DB_MANAGER_H_

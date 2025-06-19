@@ -48,7 +48,7 @@ SignalServer::~SignalServer() {}
 bool SignalServer::on_open(websocketpp::connection_hdl hdl) {
   ws_connections_[hdl] = ws_connection_id_++;
 
-  device_db_manager_ = std::make_unique<DeviceDBManager>("");
+  device_db_manager_ = std::make_unique<DeviceDBManager>("devices.db");
   return true;
 }
 
@@ -156,20 +156,44 @@ void SignalServer::on_message(websocketpp::connection_hdl hdl,
   switch (HASH_STRING_PIECE(type.c_str())) {
     case "login"_H: {
       std::string host_id = j["user_id"].get<std::string>();
-      if (host_id.empty()) {
-        host_id = "";  // todo
-        LOG_INFO("New client, assign id [{}] to it", host_id);
+      std::string password = j["password"].get<std::string>();
+
+      DeviceCredential dev_cred =
+          device_db_manager_->AddDevice(host_id, password);
+
+      std::string ret_host_id = dev_cred.device_id;
+      std::string ret_password = dev_cred.password;
+      bool update_password = dev_cred.update;
+
+      bool update_success =
+          (!ret_host_id.empty() && !ret_password.empty()) && update_password;
+      bool login_success =
+          (!ret_host_id.empty() && !ret_password.empty()) && !update_password;
+      bool register_success = (!ret_host_id.empty() && !ret_password.empty()) &&
+                              (ret_host_id != host_id);
+
+      bool success = true;
+      if (register_success) {
+        LOG_INFO("New client, assign id [{}] to it", ret_host_id);
+        success = transmission_manager_.BindUserToWsHandle(ret_host_id, hdl);
+      } else if (login_success) {
+        LOG_INFO("Receive login request with id [{}]", host_id);
+        success = transmission_manager_.BindUserToWsHandle(ret_host_id, hdl);
+      } else if (update_success) {
+        LOG_INFO("Client [{}] update password", ret_host_id);
       }
 
-      LOG_INFO("Receive login request with id [{}]", host_id);
-      bool success = transmission_manager_.BindUserToWsHandle(host_id, hdl);
       if (success) {
-        json message = {
-            {"type", "login"}, {"user_id", host_id}, {"status", "success"}};
+        json message = {{"type", "login"},
+                        {"user_id", ret_host_id},
+                        {"pasword", ret_password},
+                        {"status", "success"}};
         send_msg(hdl, message);
       } else {
-        json message = {
-            {"type", "login"}, {"user_id", host_id}, {"status", "fail"}};
+        json message = {{"type", "login"},
+                        {"user_id", ret_host_id},
+                        {"pasword", ret_password},
+                        {"status", "fail"}};
         send_msg(hdl, message);
       }
 
