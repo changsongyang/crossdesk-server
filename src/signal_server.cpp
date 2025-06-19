@@ -156,7 +156,12 @@ void SignalServer::on_message(websocketpp::connection_hdl hdl,
   switch (HASH_STRING_PIECE(type.c_str())) {
     case "login"_H: {
       std::string host_id = j["user_id"].get<std::string>();
-      std::string password = j["password"].get<std::string>();
+      std::string password;
+      if (j.contains("password")) {
+        password = j["password"].get<std::string>();
+      } else {
+        password = "";
+      }
 
       DeviceCredential dev_cred =
           device_db_manager_->AddDevice(host_id, password);
@@ -174,7 +179,8 @@ void SignalServer::on_message(websocketpp::connection_hdl hdl,
 
       bool success = true;
       if (register_success) {
-        LOG_INFO("New client, assign id [{}] to it", ret_host_id);
+        LOG_INFO("New client, assign id [{}:{}] to it", ret_host_id,
+                 ret_password);
         success = transmission_manager_.BindUserToWsHandle(ret_host_id, hdl);
       } else if (login_success) {
         LOG_INFO("Receive login request with id [{}]", host_id);
@@ -186,13 +192,13 @@ void SignalServer::on_message(websocketpp::connection_hdl hdl,
       if (success) {
         json message = {{"type", "login"},
                         {"user_id", ret_host_id},
-                        {"pasword", ret_password},
+                        {"password", ret_password},
                         {"status", "success"}};
         send_msg(hdl, message);
       } else {
         json message = {{"type", "login"},
                         {"user_id", ret_host_id},
-                        {"pasword", ret_password},
+                        {"password", ret_password},
                         {"status", "fail"}};
         send_msg(hdl, message);
       }

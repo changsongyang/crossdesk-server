@@ -6,7 +6,7 @@ set_languages("c++17")
 
 add_rules("mode.release", "mode.debug")
 
-add_requires("asio 1.24.0", "nlohmann_json", "spdlog 1.14.1", "sqlite3 3.49.0", "openssl")
+add_requires("asio 1.24.0", "nlohmann_json 3.11.3", "spdlog 1.14.1", "sqlite3 3.49.0", "openssl 1.1.1-w")
 
 add_defines("ASIO_STANDALONE", "ASIO_HAS_STD_TYPE_TRAITS",
     "ASIO_HAS_STD_SHARED_PTR", "ASIO_HAS_STD_ADDRESSOF", "ASIO_HAS_STD_ATOMIC",
