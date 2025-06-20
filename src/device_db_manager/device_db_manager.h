@@ -31,7 +31,7 @@ class DeviceDBManager {
   bool UpdatePassword(const std::string& device_id,
                       const std::string& new_password);
 
-  bool VerifyDevice(const std::string& device_id, const std::string& password);
+  int VerifyDevice(const std::string& device_id, const std::string& password);
   bool RemoveDevice(const std::string& device_id);
 
  private:

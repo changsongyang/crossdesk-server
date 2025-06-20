@@ -3,18 +3,6 @@
 #include "common.h"
 #include "log.h"
 
-const std::string GenerateTransmissionId() {
-  static const char alphanum[] = "0123456789";
-  std::string random_id;
-  random_id.reserve(6);
-
-  for (int i = 0; i < 6; ++i) {
-    random_id += alphanum[rand() % (sizeof(alphanum) - 1)];
-  }
-
-  return "000000";
-}
-
 SignalServer::SignalServer() {
   // Set logging settings
   server_.set_error_channels(websocketpp::log::elevel::all);
@@ -155,93 +143,73 @@ void SignalServer::on_message(websocketpp::connection_hdl hdl,
 
   switch (HASH_STRING_PIECE(type.c_str())) {
     case "login"_H: {
-      std::string host_id = j["user_id"].get<std::string>();
+      std::string host_id_with_pwd = j["user_id"].get<std::string>();
+      std::string host_id;
       std::string password;
-      if (j.contains("password")) {
-        password = j["password"].get<std::string>();
+      std::string return_host_id;
+
+      if (host_id_with_pwd.find("@") != std::string::npos) {
+        host_id = host_id_with_pwd.substr(0, host_id_with_pwd.find("@"));
+        password = host_id_with_pwd.substr(host_id_with_pwd.find("@") + 1);
       } else {
+        host_id = host_id_with_pwd;
         password = "";
       }
 
-      DeviceCredential dev_cred =
-          device_db_manager_->AddDevice(host_id, password);
+      if (host_id.find("C-") == std::string::npos) {
+        DeviceCredential dev_cred =
+            device_db_manager_->AddDevice(host_id, password);
 
-      std::string ret_host_id = dev_cred.device_id;
-      std::string ret_password = dev_cred.password;
-      bool update_password = dev_cred.update;
+        std::string ret_host_id = dev_cred.device_id;
+        std::string ret_password = dev_cred.password;
+        bool update_password = dev_cred.update;
 
-      bool update_success =
-          (!ret_host_id.empty() && !ret_password.empty()) && update_password;
-      bool login_success =
-          (!ret_host_id.empty() && !ret_password.empty()) && !update_password;
-      bool register_success = (!ret_host_id.empty() && !ret_password.empty()) &&
-                              (ret_host_id != host_id);
+        bool update_success = ret_host_id != "" && update_password;
+        bool login_success =
+            (ret_host_id != "" && ret_password == "") && !update_password;
+        bool register_success = (ret_host_id != "" && ret_password != "") &&
+                                (ret_host_id != host_id);
 
-      bool success = true;
-      if (register_success) {
-        LOG_INFO("New client, assign id [{}:{}] to it", ret_host_id,
-                 ret_password);
-        success = transmission_manager_.BindUserToWsHandle(ret_host_id, hdl);
-      } else if (login_success) {
-        LOG_INFO("Receive login request with id [{}]", host_id);
-        success = transmission_manager_.BindUserToWsHandle(ret_host_id, hdl);
-      } else if (update_success) {
-        LOG_INFO("Client [{}] update password", ret_host_id);
-      }
-
-      if (success) {
-        json message = {{"type", "login"},
-                        {"user_id", ret_host_id},
-                        {"password", ret_password},
-                        {"status", "success"}};
-        send_msg(hdl, message);
-      } else {
-        json message = {{"type", "login"},
-                        {"user_id", ret_host_id},
-                        {"password", ret_password},
-                        {"status", "fail"}};
-        send_msg(hdl, message);
-      }
-
-      break;
-    }
-    case "create_transmission"_H: {
-      std::string transmission_id = j["transmission_id"].get<std::string>();
-      std::string password = j["password"].get<std::string>();
-      std::string host_id = j["user_id"].get<std::string>();
-
-      LOG_INFO(
-          "Receive host id [{}] create transmission request with transmission "
-          "id [{}]",
-          host_id, transmission_id);
-      if (!transmission_manager_.IsTransmissionExist(transmission_id)) {
-        if (transmission_id.empty()) {
-          transmission_id = GenerateTransmissionId();
-          while (transmission_manager_.IsTransmissionExist(transmission_id)) {
-            transmission_id = GenerateTransmissionId();
-          }
-          LOG_INFO(
-              "Transmission id is empty, generate a new one for this request "
-              "[{}]",
-              transmission_id);
+        if (register_success) {
+          LOG_INFO("New client, assign id [{}] to it", ret_host_id);
+          return_host_id = ret_host_id + "@" + ret_password;
+        } else if (login_success) {
+          LOG_INFO("Receive login request with id [{}]", ret_host_id);
+          return_host_id = ret_host_id;
+        } else if (update_success) {
+          LOG_INFO("Client [{}] update password", ret_host_id);
+          return_host_id = ret_host_id;
         }
 
-        transmission_manager_.BindHostToTransmission(host_id, transmission_id);
-        transmission_manager_.BindPasswordToTransmission(password,
-                                                         transmission_id);
+        bool success =
+            transmission_manager_.BindUserToWsHandle(ret_host_id, hdl);
+        transmission_manager_.BindHostToTransmission(ret_host_id, ret_host_id);
 
-        LOG_INFO("Create transmission id [{}]", transmission_id);
-        json message = {{"type", "transmission_id"},
-                        {"transmission_id", transmission_id},
-                        {"status", "success"}};
-        send_msg(hdl, message);
+        if (success) {
+          json message = {{"type", "login"},
+                          {"user_id", return_host_id},
+                          {"status", "success"}};
+          send_msg(hdl, message);
+        } else {
+          json message = {{"type", "login"},
+                          {"user_id", return_host_id},
+                          {"status", "fail"}};
+          send_msg(hdl, message);
+        }
       } else {
-        LOG_INFO("Transmission id [{}] already exist", transmission_id);
-        json message = {{"type", "transmission_id"},
-                        {"transmission_id", transmission_id},
-                        {"status", "fail"},
-                        {"reason", "Transmission id exist"}};
-        send_msg(hdl, message);
+        bool success = transmission_manager_.BindUserToWsHandle(host_id, hdl);
+        transmission_manager_.BindHostToTransmission(host_id, host_id);
+        LOG_INFO("Receive login request with id [{}]", host_id);
+
+        if (success) {
+          json message = {
+              {"type", "login"}, {"user_id", host_id}, {"status", "success"}};
+          send_msg(hdl, message);
+        } else {
+          json message = {
+              {"type", "login"}, {"user_id", host_id}, {"status", "fail"}};
+          send_msg(hdl, message);
+        }
       }
 
       break;
@@ -277,10 +245,21 @@ void SignalServer::on_message(websocketpp::connection_hdl hdl,
       break;
     }
     case "query_user_id_list"_H: {
-      std::string transmission_id = j["transmission_id"].get<std::string>();
-      std::string password = j["password"].get<std::string>();
+      std::string transmission_id_pwd = j["transmission_id"].get<std::string>();
+      std::string transmission_id;
+      std::string password;
 
-      int ret = transmission_manager_.CheckPassword(password, transmission_id);
+      if (transmission_id_pwd.find("@") != std::string::npos) {
+        transmission_id =
+            transmission_id_pwd.substr(0, transmission_id_pwd.find("@"));
+        password =
+            transmission_id_pwd.substr(transmission_id_pwd.find("@") + 1);
+      } else {
+        transmission_id = transmission_id_pwd;
+        password = "";
+      }
+
+      int ret = device_db_manager_->VerifyDevice(transmission_id, password);
 
       if (0 == ret) {
         std::vector<std::string> user_id_list =
@@ -299,11 +278,6 @@ void SignalServer::on_message(websocketpp::connection_hdl hdl,
                         {"user_id_list", user_id_list},
                         {"status", "failed"},
                         {"reason", "Incorrect password"}};
-        // LOG_INFO(
-        //     "Incorrect password [{}] for transmission [{}] with password is "
-        //     "[{}]",
-        //     password, transmission_id,
-        //     transmission_manager_.GetPassword(transmission_id));
 
         send_msg(hdl, message);
       } else if (-2 == ret) {
@@ -313,11 +287,6 @@ void SignalServer::on_message(websocketpp::connection_hdl hdl,
                         {"user_id_list", user_id_list},
                         {"status", "failed"},
                         {"reason", "No such transmission id"}};
-        // LOG_INFO(
-        //     "Incorrect password [{}] for transmission [{}] with password is "
-        //     "[{}]",
-        //     password, transmission_id,
-        //     transmission_manager_.GetPassword(transmission_id));
 
         send_msg(hdl, message);
       }

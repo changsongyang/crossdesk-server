@@ -156,11 +156,9 @@ std::string DeviceDBManager::GeneratePassword() {
 
 DeviceCredential DeviceDBManager::AddDevice(const std::string& device_id,
                                             const std::string& password) {
-  std::string hash = Sha256(password);
-
   if (!device_id.empty()) {
     const char* select_sql =
-        "SELECT password_hash FROM devices WHERE device_id = ?;";
+        "SELECT password_salt, password_hash FROM devices WHERE device_id = ?;";
     sqlite3_stmt* stmt = nullptr;
     int rc = sqlite3_prepare_v2(db_, select_sql, -1, &stmt, nullptr);
     if (rc != SQLITE_OK) {
@@ -169,13 +167,18 @@ DeviceCredential DeviceDBManager::AddDevice(const std::string& device_id,
     }
 
     sqlite3_bind_text(stmt, 1, device_id.c_str(), -1, SQLITE_TRANSIENT);
+
     rc = sqlite3_step(stmt);
     if (rc == SQLITE_ROW) {
       // Device exists
-      std::string old_hash =
-          reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+      std::string salt(
+          reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0)));
+      std::string stored_hash(
+          reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1)));
+      std::string hash = HashPasswordWithSalt(salt, password);
+
       sqlite3_finalize(stmt);
-      if (old_hash != hash) {
+      if (stored_hash != hash) {
         // Update password
         const char* update_sql =
             "UPDATE devices SET password_hash = ? WHERE device_id = ?;";
@@ -186,14 +189,17 @@ DeviceCredential DeviceDBManager::AddDevice(const std::string& device_id,
         }
         sqlite3_bind_text(stmt, 1, hash.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(stmt, 2, device_id.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 3, salt.c_str(), -1, SQLITE_TRANSIENT);
         rc = sqlite3_step(stmt);
         sqlite3_finalize(stmt);
         if (rc != SQLITE_DONE) {
           LOG_ERROR("Failed to update password.");
           return {};
         }
+        return {device_id, "", true};  // password updated
+      } else {
+        return {device_id, "", false};  // same password
       }
-      return {device_id, password, true};  // Same password or updated
     }
     sqlite3_finalize(stmt);
   }
@@ -237,19 +243,20 @@ DeviceCredential DeviceDBManager::AddDevice(const std::string& device_id,
   return {};
 }
 
-bool DeviceDBManager::VerifyDevice(const std::string& device_id,
-                                   const std::string& password) {
+int DeviceDBManager::VerifyDevice(const std::string& device_id,
+                                  const std::string& password) {
   const char* sql =
       "SELECT password_salt, password_hash FROM devices WHERE device_id = ?;";
 
   sqlite3_stmt* stmt = nullptr;
   if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-    return false;
+    return -1;
   }
 
   sqlite3_bind_text(stmt, 1, device_id.c_str(), -1, SQLITE_TRANSIENT);
 
-  bool result = false;
+  // Check if device exists
+  int result = -2;
   if (sqlite3_step(stmt) == SQLITE_ROW) {
     std::string salt(
         reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0)));
@@ -258,7 +265,11 @@ bool DeviceDBManager::VerifyDevice(const std::string& device_id,
 
     std::string hash = HashPasswordWithSalt(salt, password);
     if (hash == stored_hash) {
-      result = true;
+      // Password is correct
+      result = 0;
+    } else {
+      // Password is incorrect
+      result = -1;
     }
   }
 
