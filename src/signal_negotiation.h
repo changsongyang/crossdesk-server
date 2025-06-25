@@ -10,8 +10,13 @@ using nlohmann::json;
 
 class SignalNegotiation {
  public:
-  SignalNegotiation();
+  SignalNegotiation(std::shared_ptr<TransmissionManager> transmission_manager);
   ~SignalNegotiation();
+
+  void SetSendMsgCallback(
+      std::function<void(websocketpp::connection_hdl, json)> send_msg) {
+    send_msg_ = send_msg;
+  }
 
   bool login_user(websocketpp::connection_hdl hdl, const json& j);
   bool leave_transmission(websocketpp::connection_hdl hdl, const json& j);
@@ -21,8 +26,9 @@ class SignalNegotiation {
   bool new_candidate(websocketpp::connection_hdl hdl, const json& j);
 
  private:
-  TransmissionManager transmission_manager_;
+  std::shared_ptr<TransmissionManager> transmission_manager_;
   std::unique_ptr<DeviceDBManager> device_db_manager_;
+  std::function<void(websocketpp::connection_hdl, json)> send_msg_;
 };
 
 #endif

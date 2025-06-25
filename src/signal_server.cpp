@@ -20,6 +20,8 @@ SignalServer::SignalServer() {
   server_.set_message_handler(std::bind(&SignalServer::on_message, this,
                                         std::placeholders::_1,
                                         std::placeholders::_2));
+  server_.set_tls_init_handler(
+      std::bind(&SignalServer::on_tls_init, this, std::placeholders::_1));
   server_.set_ping_handler(std::bind(&SignalServer::on_ping, this,
                                      std::placeholders::_1,
                                      std::placeholders::_2));
@@ -27,7 +29,12 @@ SignalServer::SignalServer() {
                                      std::placeholders::_1,
                                      std::placeholders::_2));
 
-  signal_negotiation_ = std::make_unique<SignalNegotiation>();
+  transmission_manager_ = std::make_shared<TransmissionManager>();
+  signal_negotiation_ =
+      std::make_unique<SignalNegotiation>(transmission_manager_);
+  signal_negotiation_->SetSendMsgCallback(std::bind(&SignalServer::send_msg,
+                                                    this, std::placeholders::_1,
+                                                    std::placeholders::_2));
 }
 
 SignalServer::~SignalServer() {}
@@ -38,13 +45,93 @@ bool SignalServer::on_open(websocketpp::connection_hdl hdl) {
 }
 
 bool SignalServer::on_close(websocketpp::connection_hdl hdl) {
+  std::string user_id = transmission_manager_->ReleaseUserFromeWsHandle(hdl);
+  if (!user_id.empty()) {
+    LOG_INFO("Websocket connection [{}|{}] closed", ws_connections_[hdl],
+             user_id);
+
+    // check user is host or not
+    std::string transmission_id_host = transmission_manager_->IsHost(user_id);
+    if (!transmission_id_host.empty()) {
+      transmission_manager_->ReleaseTransmission(transmission_id_host);
+      LOG_INFO("Release transmission [{}] due to host [{}] leaves",
+               transmission_id_host, user_id);
+
+      // notify all users in transmission
+      json message = {{"type", "user_leave_transmission"},
+                      {"transmission_id", transmission_id_host},
+                      {"user_id", user_id}};
+
+      std::vector<std::string> user_id_list =
+          transmission_manager_->GetAllUserIdOfTransmission(
+              transmission_id_host);
+
+      for (const auto& user_id : user_id_list) {
+        send_msg(transmission_manager_->GetWsHandle(user_id), message);
+      }
+    }
+
+    // check user is guest or not
+    std::string transmission_id_guest = transmission_manager_->IsGuest(user_id);
+    if (!transmission_id_guest.empty()) {
+      transmission_manager_->ReleaseGuestFromTransmission(user_id);
+      LOG_INFO("Release guest [{}] from transmission [{}]", user_id,
+               transmission_id_guest);
+
+      // notify all users in transmission
+      json message = {{"type", "user_leave_transmission"},
+                      {"transmission_id", transmission_id_guest},
+                      {"user_id", user_id}};
+
+      std::vector<std::string> user_id_list =
+          transmission_manager_->GetAllUserIdOfTransmission(
+              transmission_id_guest);
+
+      for (const auto& user_id : user_id_list) {
+        send_msg(transmission_manager_->GetWsHandle(user_id), message);
+      }
+    }
+  }
+
   ws_connections_.erase(hdl);
   return true;
 }
 
-bool SignalServer::on_fail(websocketpp::connection_hdl hdl) { return true; }
+bool SignalServer::on_fail(websocketpp::connection_hdl hdl) {
+  std::string user_id = transmission_manager_->GetUserId(hdl);
+  if (!user_id.empty()) {
+    LOG_INFO("Websocket connection [{}|{}] failed", ws_connections_[hdl],
+             user_id);
+  }
+  return true;
+}
+
+context_ptr SignalServer::on_tls_init(websocketpp::connection_hdl hdl) {
+  namespace asio = websocketpp::lib::asio;
+  context_ptr ctx = websocketpp::lib::make_shared<asio::ssl::context>(
+      asio::ssl::context::sslv23);
+
+  try {
+    ctx->set_options(
+        asio::ssl::context::default_workarounds | asio::ssl::context::no_sslv2 |
+        asio::ssl::context::no_sslv3 | asio::ssl::context::single_dh_use);
+
+    ctx->use_certificate_chain_file("cert/crossdesk.cn_bundle.crt");
+    ctx->use_private_key_file("cert/crossdesk.cn.key", asio::ssl::context::pem);
+
+    SSL_CTX_set_cipher_list(ctx->native_handle(),
+                            "ECDHE-ECDSA-AES256-GCM-SHA384:"
+                            "ECDHE-RSA-AES256-GCM-SHA384:"
+                            "ECDHE-ECDSA-AES128-GCM-SHA256:"
+                            "ECDHE-RSA-AES128-GCM-SHA256");
+  } catch (std::exception& e) {
+    std::cout << "Exception: " << e.what() << std::endl;
+  }
+  return ctx;
+}
 
 bool SignalServer::on_ping(websocketpp::connection_hdl hdl, std::string s) {
+  transmission_manager_->UpdateWsHandleLastActiveTime(hdl);
   return true;
 }
 
@@ -54,23 +141,6 @@ bool SignalServer::on_pong(websocketpp::connection_hdl hdl, std::string s) {
 
 void SignalServer::run(uint16_t port) {
   server_.set_reuse_addr(true);
-  server_.set_tls_init_handler([](websocketpp::connection_hdl) {
-    namespace asio = websocketpp::lib::asio;
-    auto ctx = std::make_shared<asio::ssl::context>(asio::ssl::context::tlsv12);
-    try {
-      ctx->set_options(asio::ssl::context::default_workarounds |
-                       asio::ssl::context::no_sslv2 |
-                       asio::ssl::context::no_sslv3 |
-                       asio::ssl::context::single_dh_use);
-      ctx->use_certificate_chain_file("cert/crossdesk.cn_bundle.crt");
-      ctx->use_private_key_file("cert/crossdesk.cn.key",
-                                asio::ssl::context::pem);
-    } catch (std::exception& e) {
-      LOG_ERROR("TLS init failed: {}", e.what());
-    }
-    return ctx;
-  });
-
   LOG_INFO("Signal server runs on port [{}]", port);
 
   server_.listen(port);

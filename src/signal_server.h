@@ -13,6 +13,8 @@
 using nlohmann::json;
 
 typedef websocketpp::server<websocketpp::config::asio_tls> server;
+typedef websocketpp::lib::shared_ptr<websocketpp::lib::asio::ssl::context>
+    context_ptr;
 typedef unsigned int connection_id;
 
 class SignalServer {
@@ -23,6 +25,7 @@ class SignalServer {
   bool on_open(websocketpp::connection_hdl hdl);
   bool on_close(websocketpp::connection_hdl hdl);
   bool on_fail(websocketpp::connection_hdl hdl);
+  context_ptr on_tls_init(websocketpp::connection_hdl hdl);
   bool on_ping(websocketpp::connection_hdl hdl, std::string s);
   bool on_pong(websocketpp::connection_hdl hdl, std::string s);
 
@@ -37,6 +40,7 @@ class SignalServer {
       ws_connections_;
   unsigned int ws_connection_id_ = 0;
 
+  std::shared_ptr<TransmissionManager> transmission_manager_;
   std::unique_ptr<SignalNegotiation> signal_negotiation_;
 };
 
