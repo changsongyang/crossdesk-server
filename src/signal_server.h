@@ -4,19 +4,16 @@
 #include <functional>
 #include <map>
 #include <nlohmann/json.hpp>
-#include <set>
 #include <string>
-#include <websocketpp/config/asio_no_tls.hpp>
+#include <websocketpp/config/asio.hpp>
 #include <websocketpp/server.hpp>
 
-#include "device_db_manager.h"
-#include "transmission_manager.h"
+#include "signal_negotiation.h"
 
 using nlohmann::json;
 
-typedef websocketpp::server<websocketpp::config::asio> server;
+typedef websocketpp::server<websocketpp::config::asio_tls> server;
 typedef unsigned int connection_id;
-typedef std::string room_id;
 
 class SignalServer {
  public:
@@ -24,20 +21,14 @@ class SignalServer {
   ~SignalServer();
 
   bool on_open(websocketpp::connection_hdl hdl);
-
   bool on_close(websocketpp::connection_hdl hdl);
-
   bool on_fail(websocketpp::connection_hdl hdl);
-
   bool on_ping(websocketpp::connection_hdl hdl, std::string s);
-
   bool on_pong(websocketpp::connection_hdl hdl, std::string s);
 
   void run(uint16_t port);
-
-  void on_message(websocketpp::connection_hdl hdl, server::message_ptr msg);
-
   void send_msg(websocketpp::connection_hdl hdl, json message);
+  void on_message(websocketpp::connection_hdl hdl, server::message_ptr msg);
 
  private:
   server server_;
@@ -46,9 +37,7 @@ class SignalServer {
       ws_connections_;
   unsigned int ws_connection_id_ = 0;
 
- private:
-  TransmissionManager transmission_manager_;
-  std::unique_ptr<DeviceDBManager> device_db_manager_;
+  std::unique_ptr<SignalNegotiation> signal_negotiation_;
 };
 
 #endif
