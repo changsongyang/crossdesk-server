@@ -1,3 +1,9 @@
+/*
+ * @Author: DI JUNKUN
+ * @Date: 2025-06-26
+ * Copyright (c) 2025 by DI JUNKUN, All Rights Reserved.
+ */
+
 #ifndef _SIGNAL_NEGOTIATION_H_
 #define _SIGNAL_NEGOTIATION_H_
 

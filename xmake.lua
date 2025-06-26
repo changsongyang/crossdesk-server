@@ -23,6 +23,8 @@ end
 
 add_packages("spdlog", "websocketpp", "openssl", "sqlite3", "asio", "nlohmann_json")
 
+includes("thirdparty")
+
 target("log")
     set_kind("headeronly")
     add_packages("spdlog")

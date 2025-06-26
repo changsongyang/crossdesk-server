@@ -96,9 +96,13 @@ bool SignalNegotiation::leave_transmission(websocketpp::connection_hdl hdl,
   std::vector<std::string> user_id_list =
       transmission_manager_->GetAllUserIdOfTransmission(transmission_id);
 
-  for (const auto& user_id : user_id_list) {
-    send_msg_(transmission_manager_->GetWsHandle(user_id), message);
+  for (const auto& id : user_id_list) {
+    if (id != user_id) {
+      send_msg_(transmission_manager_->GetWsHandle(id), message);
+    }
   }
+
+  transmission_manager_->ReleaseUserFromWsHandle(hdl);
 
   bool is_host =
       transmission_manager_->IsHostOfTransmission(user_id, transmission_id);
@@ -128,8 +132,7 @@ bool SignalNegotiation::query_user_id_list(websocketpp::connection_hdl hdl,
     password = "";
   }
 
-  int ret = device_db_manager_->VerifyDevice(transmission_id,
-                                             j["password"].get<std::string>());
+  int ret = device_db_manager_->VerifyDevice(transmission_id, password);
 
   if (0 == ret) {
     std::vector<std::string> user_id_list =
@@ -160,6 +163,7 @@ bool SignalNegotiation::query_user_id_list(websocketpp::connection_hdl hdl,
 
     send_msg_(hdl, message);
   }
+
   return true;
 }
 
