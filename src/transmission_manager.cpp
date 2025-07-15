@@ -51,7 +51,12 @@ std::string TransmissionManager::IsGuest(const std::string& user_id) {
 bool TransmissionManager::IsHostOfTransmission(
     const std::string& user_id, const std::string& transmission_id) {
   std::lock_guard<std::recursive_mutex> lock(ws_hdl_alive_checker_mutex_);
-  return transmission_host_id_list_[transmission_id] == user_id;
+  if (transmission_host_id_list_.count(transmission_id)) {
+    return transmission_host_id_list_[transmission_id] == user_id;
+  } else {
+    LOG_WARN("Transmission [{}] does not exist", transmission_id);
+    return false;
+  }
 }
 
 std::vector<std::string> TransmissionManager::GetAllUserIdOfTransmission(
