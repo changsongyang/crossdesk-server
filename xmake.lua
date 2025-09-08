@@ -26,9 +26,8 @@ add_packages("spdlog", "websocketpp", "openssl", "sqlite3", "asio", "nlohmann_js
 includes("thirdparty")
 
 target("log")
-    set_kind("headeronly")
-    add_packages("spdlog")
-    add_headerfiles("src/log/log.h")
+    set_kind("object")
+    add_files("src/log/log.cpp")
     add_includedirs("src/log", {public = true})
 
 target("common")

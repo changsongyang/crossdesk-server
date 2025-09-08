@@ -12,39 +12,39 @@ SignalServer::SignalServer() {
   server_.init_asio();
 
   server_.set_open_handler(
-      std::bind(&SignalServer::on_open, this, std::placeholders::_1));
+      std::bind(&SignalServer::OnOpen, this, std::placeholders::_1));
   server_.set_close_handler(
-      std::bind(&SignalServer::on_close, this, std::placeholders::_1));
+      std::bind(&SignalServer::OnClose, this, std::placeholders::_1));
   server_.set_fail_handler(
-      std::bind(&SignalServer::on_fail, this, std::placeholders::_1));
-  server_.set_message_handler(std::bind(&SignalServer::on_message, this,
+      std::bind(&SignalServer::OnFail, this, std::placeholders::_1));
+  server_.set_message_handler(std::bind(&SignalServer::OnMessage, this,
                                         std::placeholders::_1,
                                         std::placeholders::_2));
   server_.set_tls_init_handler(
-      std::bind(&SignalServer::on_tls_init, this, std::placeholders::_1));
-  server_.set_ping_handler(std::bind(&SignalServer::on_ping, this,
+      std::bind(&SignalServer::OnTlsInit, this, std::placeholders::_1));
+  server_.set_ping_handler(std::bind(&SignalServer::OnPing, this,
                                      std::placeholders::_1,
                                      std::placeholders::_2));
-  server_.set_pong_handler(std::bind(&SignalServer::on_pong, this,
+  server_.set_pong_handler(std::bind(&SignalServer::OnPing, this,
                                      std::placeholders::_1,
                                      std::placeholders::_2));
 
   transmission_manager_ = std::make_shared<TransmissionManager>();
   signal_negotiation_ =
       std::make_unique<SignalNegotiation>(transmission_manager_);
-  signal_negotiation_->SetSendMsgCallback(std::bind(&SignalServer::send_msg,
+  signal_negotiation_->SetSendMsgCallback(std::bind(&SignalServer::SendMsg,
                                                     this, std::placeholders::_1,
                                                     std::placeholders::_2));
 }
 
 SignalServer::~SignalServer() {}
 
-bool SignalServer::on_open(websocketpp::connection_hdl hdl) {
+bool SignalServer::OnOpen(websocketpp::connection_hdl hdl) {
   ws_connections_[hdl] = ws_connection_id_++;
   return true;
 }
 
-bool SignalServer::on_close(websocketpp::connection_hdl hdl) {
+bool SignalServer::OnClose(websocketpp::connection_hdl hdl) {
   std::string user_id = transmission_manager_->ReleaseUserFromWsHandle(hdl);
   if (!user_id.empty()) {
     LOG_INFO("Websocket connection [{}|{}] closed", ws_connections_[hdl],
@@ -54,7 +54,7 @@ bool SignalServer::on_close(websocketpp::connection_hdl hdl) {
   return true;
 }
 
-bool SignalServer::on_fail(websocketpp::connection_hdl hdl) {
+bool SignalServer::OnFail(websocketpp::connection_hdl hdl) {
   std::string user_id = transmission_manager_->ReleaseUserFromWsHandle(hdl);
   if (!user_id.empty()) {
     LOG_INFO("Websocket connection [{}|{}] failed", ws_connections_[hdl],
@@ -63,7 +63,7 @@ bool SignalServer::on_fail(websocketpp::connection_hdl hdl) {
   return true;
 }
 
-context_ptr SignalServer::on_tls_init(websocketpp::connection_hdl hdl) {
+context_ptr SignalServer::OnTlsInit(websocketpp::connection_hdl hdl) {
   namespace asio = websocketpp::lib::asio;
   context_ptr ctx = websocketpp::lib::make_shared<asio::ssl::context>(
       asio::ssl::context::sslv23);
@@ -87,16 +87,16 @@ context_ptr SignalServer::on_tls_init(websocketpp::connection_hdl hdl) {
   return ctx;
 }
 
-bool SignalServer::on_ping(websocketpp::connection_hdl hdl, std::string s) {
+bool SignalServer::OnPing(websocketpp::connection_hdl hdl, std::string s) {
   transmission_manager_->UpdateWsHandleLastActiveTime(hdl);
   return true;
 }
 
-bool SignalServer::on_pong(websocketpp::connection_hdl hdl, std::string s) {
+bool SignalServer::OnPong(websocketpp::connection_hdl hdl, std::string s) {
   return true;
 }
 
-void SignalServer::run(uint16_t port) {
+void SignalServer::Run(uint16_t port) {
   server_.set_reuse_addr(true);
   LOG_INFO("Signal server runs on port [{}]", port);
 
@@ -105,7 +105,7 @@ void SignalServer::run(uint16_t port) {
   server_.run();
 }
 
-void SignalServer::send_msg(websocketpp::connection_hdl hdl, json message) {
+void SignalServer::SendMsg(websocketpp::connection_hdl hdl, json message) {
   if (!hdl.expired()) {
     server_.send(hdl, message.dump(), websocketpp::frame::opcode::text);
   } else {
@@ -113,8 +113,8 @@ void SignalServer::send_msg(websocketpp::connection_hdl hdl, json message) {
   }
 }
 
-void SignalServer::on_message(websocketpp::connection_hdl hdl,
-                              server::message_ptr msg) {
+void SignalServer::OnMessage(websocketpp::connection_hdl hdl,
+                             server::message_ptr msg) {
   if (transmission_manager_) {
     transmission_manager_->UpdateWsHandleLastActiveTime(hdl);
   }

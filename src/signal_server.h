@@ -28,16 +28,16 @@ class SignalServer {
   SignalServer();
   ~SignalServer();
 
-  bool on_open(websocketpp::connection_hdl hdl);
-  bool on_close(websocketpp::connection_hdl hdl);
-  bool on_fail(websocketpp::connection_hdl hdl);
-  context_ptr on_tls_init(websocketpp::connection_hdl hdl);
-  bool on_ping(websocketpp::connection_hdl hdl, std::string s);
-  bool on_pong(websocketpp::connection_hdl hdl, std::string s);
+  bool OnOpen(websocketpp::connection_hdl hdl);
+  bool OnClose(websocketpp::connection_hdl hdl);
+  bool OnFail(websocketpp::connection_hdl hdl);
+  context_ptr OnTlsInit(websocketpp::connection_hdl hdl);
+  bool OnPing(websocketpp::connection_hdl hdl, std::string s);
+  bool OnPong(websocketpp::connection_hdl hdl, std::string s);
 
-  void run(uint16_t port);
-  void send_msg(websocketpp::connection_hdl hdl, json message);
-  void on_message(websocketpp::connection_hdl hdl, server::message_ptr msg);
+  void Run(uint16_t port);
+  void SendMsg(websocketpp::connection_hdl hdl, json message);
+  void OnMessage(websocketpp::connection_hdl hdl, server::message_ptr msg);
 
  private:
   server server_;
