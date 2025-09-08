@@ -3,9 +3,10 @@
 #include "log.h"
 
 SignalNegotiation::SignalNegotiation(
-    std::shared_ptr<TransmissionManager> transmission_manager)
+    std::shared_ptr<TransmissionManager> transmission_manager,
+    std::string db_path)
     : transmission_manager_(transmission_manager) {
-  device_db_manager_ = std::make_unique<DeviceDBManager>("devices.db");
+  device_db_manager_ = std::make_unique<DeviceDBManager>(db_path);
 }
 
 SignalNegotiation::~SignalNegotiation() {}

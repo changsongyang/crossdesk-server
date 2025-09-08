@@ -35,13 +35,14 @@ class SignalServer {
   bool OnPing(websocketpp::connection_hdl hdl, std::string s);
   bool OnPong(websocketpp::connection_hdl hdl, std::string s);
 
-  void Run(uint16_t port, std::string certs_dir);
+  void Run(uint16_t port, std::string certs_dir, std::string db_path);
   void SendMsg(websocketpp::connection_hdl hdl, json message);
   void OnMessage(websocketpp::connection_hdl hdl, server::message_ptr msg);
 
  private:
   server server_;
   std::string certs_dir_;
+  std::string db_path_;
   std::map<websocketpp::connection_hdl, connection_id,
            std::owner_less<websocketpp::connection_hdl>>
       ws_connections_;

@@ -16,6 +16,7 @@ int main(int argc, char* argv[]) {
   std::string port = "9090";
   std::string log_dir = "./logs";
   std::string certs_dir = "./cert";
+  std::string db_path = "devices.db";
 
   if (argc > 1) {
     port = argv[1];
@@ -26,13 +27,17 @@ int main(int argc, char* argv[]) {
   }
 
   if (argc > 3) {
-    log_dir = argv[3];
+    db_path = argv[3];
+  }
+
+  if (argc > 4) {
+    log_dir = argv[4];
   }
 
   InitLogger(log_dir);
 
   SignalServer s;
-  s.Run(std::stoi(port), certs_dir);
+  s.Run(std::stoi(port), certs_dir, db_path);
   return 0;
 }
 

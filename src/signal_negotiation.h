@@ -16,7 +16,8 @@ using nlohmann::json;
 
 class SignalNegotiation {
  public:
-  SignalNegotiation(std::shared_ptr<TransmissionManager> transmission_manager);
+  SignalNegotiation(std::shared_ptr<TransmissionManager> transmission_manager,
+                    std::string db_path);
   ~SignalNegotiation();
 
   void SetSendMsgCallback(
