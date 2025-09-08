@@ -13,20 +13,26 @@
 #include "signal_server.h"
 
 int main(int argc, char* argv[]) {
-  SignalServer s;
   std::string port = "9090";
   std::string log_dir = "./logs";
+  std::string certs_dir = "./cert";
 
   if (argc > 1) {
     port = argv[1];
   }
 
   if (argc > 2) {
-    log_dir = argv[2];
+    certs_dir = argv[2];
+  }
+
+  if (argc > 3) {
+    log_dir = argv[3];
   }
 
   InitLogger(log_dir);
-  s.Run(std::stoi(port));
+
+  SignalServer s;
+  s.Run(std::stoi(port), certs_dir);
   return 0;
 }
 

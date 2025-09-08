@@ -73,8 +73,10 @@ context_ptr SignalServer::OnTlsInit(websocketpp::connection_hdl hdl) {
         asio::ssl::context::default_workarounds | asio::ssl::context::no_sslv2 |
         asio::ssl::context::no_sslv3 | asio::ssl::context::single_dh_use);
 
-    ctx->use_certificate_chain_file("cert/crossdesk.cn_bundle.crt");
-    ctx->use_private_key_file("cert/crossdesk.cn.key", asio::ssl::context::pem);
+    std::string cert_file = certs_dir_ + "/crossdesk.cn.crt";
+    std::string key_file = certs_dir_ + "/crossdesk.cn.key";
+    ctx->use_certificate_chain_file(cert_file);
+    ctx->use_private_key_file(key_file, asio::ssl::context::pem);
 
     SSL_CTX_set_cipher_list(ctx->native_handle(),
                             "ECDHE-ECDSA-AES256-GCM-SHA384:"
@@ -96,7 +98,13 @@ bool SignalServer::OnPong(websocketpp::connection_hdl hdl, std::string s) {
   return true;
 }
 
-void SignalServer::Run(uint16_t port) {
+void SignalServer::Run(uint16_t port, std::string certs_dir) {
+  certs_dir_ = certs_dir;
+  if (!std::filesystem::exists(certs_dir_)) {
+    LOG_ERROR("Certs dir [{}] not exist", certs_dir_);
+    return;
+  }
+
   server_.set_reuse_addr(true);
   LOG_INFO("Signal server runs on port [{}]", port);
 
