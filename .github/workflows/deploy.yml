@@ -18,7 +18,7 @@ jobs:
       - name: Cache xmake dependencies
         uses: actions/cache@v4
         with:
-          path: ~/.xmake/packages
+          path: /home/runner/.xmake/packages
           key: ${{ runner.os }}-xmake-deps-linux-${{ hashFiles('**/xmake.lua') }}
           restore-keys: |
             ${{ runner.os }}-xmake-deps-linux-

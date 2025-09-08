@@ -73,7 +73,7 @@ context_ptr SignalServer::OnTlsInit(websocketpp::connection_hdl hdl) {
         asio::ssl::context::default_workarounds | asio::ssl::context::no_sslv2 |
         asio::ssl::context::no_sslv3 | asio::ssl::context::single_dh_use);
 
-    std::string cert_file = certs_dir_ + "crossdesk.cn_bundle.crt";
+    std::string cert_file = certs_dir_ + "/crossdesk.cn_bundle.crt";
     std::string key_file = certs_dir_ + "/crossdesk.cn.key";
     ctx->use_certificate_chain_file(cert_file);
     ctx->use_private_key_file(key_file, asio::ssl::context::pem);
