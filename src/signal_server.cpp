@@ -37,6 +37,44 @@ SignalServer::SignalServer() {
                                                     std::placeholders::_2));
 }
 
+SignalServer::SignalServer(uint16_t port, std::string certs_dir,
+                           std::string db_path)
+    : port_(port), certs_dir_(certs_dir), db_path_(db_path) {
+  LOG_INFO(
+      "Starting CrossDesk Signaling Server on port {}, certs_dir: {}, "
+      "db_path: {}",
+      port_, certs_dir_, db_path_);
+
+  server_.set_error_channels(websocketpp::log::elevel::none);
+  server_.set_access_channels(websocketpp::log::alevel::none);
+  server_.init_asio();
+
+  server_.set_open_handler(
+      std::bind(&SignalServer::OnOpen, this, std::placeholders::_1));
+  server_.set_close_handler(
+      std::bind(&SignalServer::OnClose, this, std::placeholders::_1));
+  server_.set_fail_handler(
+      std::bind(&SignalServer::OnFail, this, std::placeholders::_1));
+  server_.set_message_handler(std::bind(&SignalServer::OnMessage, this,
+                                        std::placeholders::_1,
+                                        std::placeholders::_2));
+  server_.set_tls_init_handler(
+      std::bind(&SignalServer::OnTlsInit, this, std::placeholders::_1));
+  server_.set_ping_handler(std::bind(&SignalServer::OnPing, this,
+                                     std::placeholders::_1,
+                                     std::placeholders::_2));
+  server_.set_pong_handler(std::bind(&SignalServer::OnPing, this,
+                                     std::placeholders::_1,
+                                     std::placeholders::_2));
+
+  transmission_manager_ = std::make_shared<TransmissionManager>();
+  signal_negotiation_ =
+      std::make_unique<SignalNegotiation>(transmission_manager_, db_path_);
+  signal_negotiation_->SetSendMsgCallback(std::bind(&SignalServer::SendMsg,
+                                                    this, std::placeholders::_1,
+                                                    std::placeholders::_2));
+}
+
 SignalServer::~SignalServer() {}
 
 bool SignalServer::OnOpen(websocketpp::connection_hdl hdl) {
@@ -98,20 +136,16 @@ bool SignalServer::OnPong(websocketpp::connection_hdl hdl, std::string s) {
   return true;
 }
 
-void SignalServer::Run(uint16_t port, std::string certs_dir,
-                       std::string db_path) {
-  certs_dir_ = certs_dir;
-  db_path_ = db_path;
-
+void SignalServer::Run() {
   if (!std::filesystem::exists(certs_dir_)) {
     LOG_ERROR("Certs dir [{}] not exist", certs_dir_);
     return;
   }
 
   server_.set_reuse_addr(true);
-  LOG_INFO("Signal server runs on port [{}]", port);
+  LOG_INFO("Signal server runs on port [{}]", port_);
 
-  server_.listen(port);
+  server_.listen(port_);
   server_.start_accept();
   server_.run();
 }

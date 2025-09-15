@@ -26,6 +26,7 @@ typedef unsigned int connection_id;
 class SignalServer {
  public:
   SignalServer();
+  SignalServer(uint16_t port, std::string certs_dir, std::string db_path);
   ~SignalServer();
 
   bool OnOpen(websocketpp::connection_hdl hdl);
@@ -35,12 +36,13 @@ class SignalServer {
   bool OnPing(websocketpp::connection_hdl hdl, std::string s);
   bool OnPong(websocketpp::connection_hdl hdl, std::string s);
 
-  void Run(uint16_t port, std::string certs_dir, std::string db_path);
+  void Run();
   void SendMsg(websocketpp::connection_hdl hdl, json message);
   void OnMessage(websocketpp::connection_hdl hdl, server::message_ptr msg);
 
  private:
   server server_;
+  uint16_t port_;
   std::string certs_dir_;
   std::string db_path_;
   std::map<websocketpp::connection_hdl, connection_id,

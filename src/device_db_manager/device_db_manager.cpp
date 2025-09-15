@@ -3,6 +3,7 @@
 #include <openssl/sha.h>
 
 #include <chrono>
+#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <random>
@@ -11,6 +12,14 @@
 #include "log.h"
 
 DeviceDBManager::DeviceDBManager(const std::string& db_path) : db_(nullptr) {
+  try {
+    std::filesystem::path path(db_path);
+    std::filesystem::create_directories(path.parent_path());
+  } catch (const std::exception& e) {
+    throw std::runtime_error("Failed to create parent directory for DB: " +
+                             std::string(e.what()));
+  }
+
   if (sqlite3_open(db_path.c_str(), &db_) != SQLITE_OK) {
     LOG_ERROR("Failed to open database, {}", sqlite3_errmsg(db_));
   }

@@ -36,8 +36,9 @@ int main(int argc, char* argv[]) {
 
   InitLogger(log_dir);
 
-  SignalServer s;
-  s.Run(std::stoi(port), certs_dir, db_path);
+  SignalServer s(std::stoi(port), certs_dir, db_path);
+  s.Run();
+
   return 0;
 }
 
