@@ -37,3 +37,10 @@ xmake f -m debug/release
 xmake b -vy crossdesk_server
 ```
 更多使用方法可参考 [Xmake官方文档](https://xmake.io/guide/quick-start.html) 。
+
+## 构建镜像
+```
+cd docker
+
+sudo docker build -t image-name .
+```

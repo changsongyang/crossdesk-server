@@ -1,0 +1,21 @@
+FROM crossdesk/crossdesk-server-base:latest
+
+# create certificate directory and generate a self-signed TLS certificate
+RUN mkdir -p /opt/turnserver && \
+    cd /opt/turnserver && \
+    # generate private key
+    openssl genrsa -out turn_server_pkey.pem 2048 && \
+    # generate self-signed certificate (valid for 10 years)
+    openssl req -x509 -new -nodes \
+      -key turn_server_pkey.pem \
+      -sha256 -days 3650 \
+      -subj "/C=CN/ST=Beijing/L=Beijing/O=SelfSigned/OU=IT/CN=coturn.local" \
+      -out turn_server_cert.pem && \
+    chmod 600 /opt/turnserver/turn_server_pkey.pem
+
+# copy entrypoint script into the image
+COPY start.sh /start.sh
+RUN chmod +x /start.sh
+
+# Set the container entrypoint
+ENTRYPOINT ["/start.sh"]

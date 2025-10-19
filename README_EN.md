@@ -35,3 +35,10 @@ xmake f -m debug/release
 xmake b -vy crossdesk_server
 ```
 For more information, please refer to the [official Xmake documentation](https://xmake.io/guide/quick-start.html) .
+
+## Build Docker Image
+```
+cd docker
+
+sudo docker build -t image-name .
+```
