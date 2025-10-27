@@ -1,11 +1,25 @@
+FROM ubuntu:22.04 AS builder
+
+RUN apt-get update && \
+    apt-get install -y software-properties-common git curl unzip build-essential && \
+    add-apt-repository -y ppa:xmake-io/xmake && \
+    apt-get update && \
+    apt-get install -y xmake && \
+    xmake --version --root
+
+WORKDIR /src
+COPY . .
+
+RUN xmake b -vy --root crossdesk_server && \
+    mkdir -p /output && \
+    cp build/linux/x86_64/release/crossdesk_server /output/
+
+
 FROM crossdesk/crossdesk-server-base:latest
 
-# create certificate directory and generate a self-signed TLS certificate
 RUN mkdir -p /opt/turnserver && \
     cd /opt/turnserver && \
-    # generate private key
     openssl genrsa -out turn_server_pkey.pem 2048 && \
-    # generate self-signed certificate (valid for 10 years)
     openssl req -x509 -new -nodes \
       -key turn_server_pkey.pem \
       -sha256 -days 3650 \
@@ -13,9 +27,10 @@ RUN mkdir -p /opt/turnserver && \
       -out turn_server_cert.pem && \
     chmod 600 /opt/turnserver/turn_server_pkey.pem
 
-# copy entrypoint script into the image
-COPY start.sh /start.sh
-RUN chmod +x /start.sh
 
-# Set the container entrypoint
+COPY docker/start.sh /start.sh
+COPY --from=builder /output/crossdesk_server /crossdesk-server/crossdesk_server
+
+RUN chmod +x /start.sh /crossdesk-server/crossdesk_server
+
 ENTRYPOINT ["/start.sh"]

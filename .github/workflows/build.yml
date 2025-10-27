@@ -17,41 +17,46 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Cache xmake packages
-        uses: actions/cache@v4
-        with:
-          path: $HOME/.xmake/packages
-          key: ${{ runner.os }}-xmake-${{ hashFiles('**/xmake.lua') }}
-          restore-keys: |
-            ${{ runner.os }}-xmake-
-
-      - name: Install xmake & deps
+      - name: Build Docker Image
         run: |
-          sudo apt update
-          sudo apt-get install -y software-properties-common git curl unzip build-essential
-          sudo add-apt-repository -y ppa:xmake-io/xmake
-          sudo apt update
-          sudo apt install -y xmake
-          xmake --version
+          IMAGE_NAME=crossdesk-server
+          IMAGE_TAG=${GITHUB_REF_NAME:-latest}
+          docker build -t ${IMAGE_NAME}:${IMAGE_TAG} -f docker/Dockerfile .
 
-      - name: Build
-        run: xmake b -vy crossdesk_server
-
-      - name: Prepare dist
+      - name: Save built binary as artifact
         run: |
-          mkdir -p dist
-          cp build/linux/x86_64/release/crossdesk_server dist/
-          chmod +x dist/crossdesk_server
+          docker create --name temp crossdesk-server:${GITHUB_REF_NAME:-latest}
+          docker cp temp:/crossdesk-server/crossdesk_server ./crossdesk_server
+          docker rm temp
+        shell: bash
 
-      - name: Upload build artifact (for non-tag pushes too)
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: crossdesk_server
-          path: dist/crossdesk_server
+          path: crossdesk_server
+
+      - name: Login to Docker Hub
+        if: startsWith(github.ref, 'refs/tags/')
+        run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      - name: Push Docker image to Docker Hub
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          IMAGE_TAG=${GITHUB_REF_NAME}
+          DOCKER_USER=${{ secrets.DOCKERHUB_USERNAME }}
+          IMAGE_NAME=${DOCKER_USER}/crossdesk-server
+
+          echo "Pushing ${IMAGE_NAME}:${IMAGE_TAG} and ${IMAGE_NAME}:latest"
+
+          docker tag crossdesk-server:${IMAGE_TAG} ${IMAGE_NAME}:${IMAGE_TAG}
+          docker tag crossdesk-server:${IMAGE_TAG} ${IMAGE_NAME}:latest
+
+          docker push ${IMAGE_NAME}:${IMAGE_TAG}
+          docker push ${IMAGE_NAME}:latest
 
       - name: Publish GitHub Release (on tag)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/crossdesk_server
+          files: crossdesk_server
           generate_release_notes: true
