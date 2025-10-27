@@ -1,0 +1,57 @@
+name: Build CrossDesk Server
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache xmake packages
+        uses: actions/cache@v4
+        with:
+          path: $HOME/.xmake/packages
+          key: ${{ runner.os }}-xmake-${{ hashFiles('**/xmake.lua') }}
+          restore-keys: |
+            ${{ runner.os }}-xmake-
+
+      - name: Install xmake & deps
+        run: |
+          sudo apt update
+          sudo apt-get install -y software-properties-common git curl unzip build-essential
+          sudo add-apt-repository -y ppa:xmake-io/xmake
+          sudo apt update
+          sudo apt install -y xmake
+          xmake --version
+
+      - name: Build
+        run: xmake b -vy crossdesk_server
+
+      - name: Prepare dist
+        run: |
+          mkdir -p dist
+          cp build/linux/x86_64/release/crossdesk_server dist/
+          chmod +x dist/crossdesk_server
+
+      - name: Upload build artifact (for non-tag pushes too)
+        uses: actions/upload-artifact@v4
+        with:
+          name: crossdesk_server
+          path: dist/crossdesk_server
+
+      - name: Publish GitHub Release (on tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/crossdesk_server
+          generate_release_notes: true
