@@ -16,15 +16,27 @@ if [ -z "$EXTERNAL_IP" ] || [ -z "$INTERNAL_IP" ]; then
   exit 1
 fi
 
+if [ -z "$COTURN_PORT" ]; then
+  echo "Error: COTURN_PORT must be set."
+  echo "Example: docker run -e COTURN_PORT=3478 crossdesk-server"
+  exit 1
+fi
+
+if [ -z "$MIN_PORT" ] || [ -z "$MAX_PORT" ]; then
+  echo "Error: MIN_PORT and MAX_PORT must be set."
+  echo "Example: docker run -e MIN_PORT=50000 -e MAX_PORT=60000 crossdesk-server"
+  exit 1
+fi
+
 # generate coturn configuration file
 mkdir -p /etc/coturn
 cat > "$CONF_FILE" <<EOF
 # coturn auto-generated configuration
-listening-port=3478
+listening-port=${COTURN_PORT}
 listening-ip=${INTERNAL_IP}
 external-ip=${EXTERNAL_IP}
-min-port=30000
-max-port=60000
+min-port=${MIN_PORT}
+max-port=${MAX_PORT}
 verbose
 fingerprint
 lt-cred-mech
