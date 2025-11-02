@@ -30,6 +30,8 @@ class TransmissionManager {
   std::vector<std::string> GetAllUserIdOfTransmission(
       const std::string& transmission_id);
 
+  std::string GetHostIdOfTransmission(const std::string& transmission_id);
+
   bool BindHostToTransmission(const std::string& host_id,
                               const std::string& transmission_id);
   bool BindGuestToTransmission(const std::string& guest_id,

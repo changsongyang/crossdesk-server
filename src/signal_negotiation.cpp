@@ -168,6 +168,63 @@ bool SignalNegotiation::query_user_id_list(websocketpp::connection_hdl hdl,
   return true;
 }
 
+bool SignalNegotiation::join_transmission(websocketpp::connection_hdl hdl,
+                                          const json& j) {
+  std::string transmission_id_pwd = j["transmission_id"].get<std::string>();
+  std::string transmission_id;
+  std::string password;
+
+  if (transmission_id_pwd.find("@") != std::string::npos) {
+    transmission_id =
+        transmission_id_pwd.substr(0, transmission_id_pwd.find("@"));
+    password = transmission_id_pwd.substr(transmission_id_pwd.find("@") + 1);
+  } else {
+    transmission_id = transmission_id_pwd;
+    password = "";
+  }
+
+  std::string user_id = j["user_id"].get<std::string>();
+  LOG_INFO("[{}] joins transmission [{}]", user_id.c_str(),
+           transmission_id.c_str());
+
+  int ret = device_db_manager_->VerifyDevice(transmission_id, password);
+
+  if (0 == ret) {
+    transmission_manager_->BindGuestToTransmission(user_id, transmission_id);
+
+    json message = {{"type", "user_join_transmission"},
+                    {"transmission_id", transmission_id},
+                    {"user_id", user_id},
+                    {"status", "success"}};
+
+    std::string host_id =
+        transmission_manager_->GetHostIdOfTransmission(transmission_id);
+
+    if (!host_id.empty()) {
+      send_msg_(transmission_manager_->GetWsHandle(host_id), message);
+    }
+  } else if (-1 == ret) {
+    LOG_ERROR("Password incorrect for transmission id [{}]",
+              transmission_id.c_str());
+    json message = {{"type", "user_join_transmission"},
+                    {"transmission_id", transmission_id},
+                    {"status", "failed"},
+                    {"reason", "Incorrect password"}};
+
+    send_msg_(hdl, message);
+  } else if (-2 == ret) {
+    LOG_ERROR("No such transmission id [{}]", transmission_id.c_str());
+    json message = {{"type", "user_join_transmission"},
+                    {"transmission_id", transmission_id},
+                    {"status", "failed"},
+                    {"reason", "No such transmission id"}};
+
+    send_msg_(hdl, message);
+  }
+
+  return true;
+}
+
 bool SignalNegotiation::offer(websocketpp::connection_hdl hdl, const json& j) {
   std::string transmission_id = j["transmission_id"].get<std::string>();
   std::string remote_user_id = j["remote_user_id"].get<std::string>();

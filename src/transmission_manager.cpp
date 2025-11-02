@@ -71,6 +71,16 @@ std::vector<std::string> TransmissionManager::GetAllUserIdOfTransmission(
   return result;
 }
 
+std::string TransmissionManager::GetHostIdOfTransmission(
+    const std::string& transmission_id) {
+  std::lock_guard<std::recursive_mutex> lock(ws_hdl_alive_checker_mutex_);
+  if (transmission_host_id_list_.count(transmission_id)) {
+    return transmission_host_id_list_[transmission_id];
+  }
+
+  return "";
+}
+
 bool TransmissionManager::BindHostToTransmission(
     const std::string& host_id, const std::string& transmission_id) {
   std::lock_guard<std::recursive_mutex> lock(ws_hdl_alive_checker_mutex_);

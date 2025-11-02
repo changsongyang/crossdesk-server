@@ -182,6 +182,9 @@ void SignalServer::OnMessage(websocketpp::connection_hdl hdl,
     case "query_user_id_list"_H:
       signal_negotiation_->query_user_id_list(hdl, j);
       break;
+    case "join_transmission"_H:
+      signal_negotiation_->join_transmission(hdl, j);
+      break;
     case "offer"_H:
       signal_negotiation_->offer(hdl, j);
       break;
