@@ -103,7 +103,7 @@ bool SignalNegotiation::leave_transmission(websocketpp::connection_hdl hdl,
     }
   }
 
-  transmission_manager_->ReleaseUserFromWsHandle(hdl);
+  // transmission_manager_->ReleaseUserFromWsHandle(hdl);
 
   bool is_host =
       transmission_manager_->IsHostOfTransmission(user_id, transmission_id);
@@ -291,6 +291,28 @@ bool SignalNegotiation::new_candidate(websocketpp::connection_hdl hdl,
                   {"sdp", candidate},
                   {"remote_user_id", user_id},
                   {"transmission_id", transmission_id}};
+  send_msg_(destination_hdl, message);
+
+  return true;
+}
+
+bool SignalNegotiation::new_candidate_mid(websocketpp::connection_hdl hdl,
+                                          const json& j) {
+  std::string transmission_id = j["transmission_id"].get<std::string>();
+  std::string user_id = j["user_id"].get<std::string>();
+  std::string remote_user_id = j["remote_user_id"].get<std::string>();
+  std::string candidate = j["candidate"].get<std::string>();
+  std::string mid = j["mid"].get<std::string>();
+
+  websocketpp::connection_hdl destination_hdl =
+      transmission_manager_->GetWsHandle(remote_user_id);
+
+  // LOG_INFO("send candidate [{}]", candidate.c_str());
+  json message = {{"type", "new_candidate_mid"},
+                  {"remote_user_id", user_id},
+                  {"transmission_id", transmission_id},
+                  {"candidate", candidate},
+                  {"mid", mid}};
   send_msg_(destination_hdl, message);
 
   return true;

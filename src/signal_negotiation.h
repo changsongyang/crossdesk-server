@@ -28,11 +28,11 @@ class SignalNegotiation {
   bool login_user(websocketpp::connection_hdl hdl, const json& j);
   bool leave_transmission(websocketpp::connection_hdl hdl, const json& j);
   bool query_user_id_list(websocketpp::connection_hdl hdl, const json& j);
-  bool join_transmission(websocketpp::connection_hdl hdl,
-                                          const json& j);
+  bool join_transmission(websocketpp::connection_hdl hdl, const json& j);
   bool offer(websocketpp::connection_hdl hdl, const json& j);
   bool answer(websocketpp::connection_hdl hdl, const json& j);
   bool new_candidate(websocketpp::connection_hdl hdl, const json& j);
+  bool new_candidate_mid(websocketpp::connection_hdl hdl, const json& j);
 
  private:
   std::shared_ptr<TransmissionManager> transmission_manager_;

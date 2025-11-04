@@ -154,7 +154,7 @@ void SignalServer::SendMsg(websocketpp::connection_hdl hdl, json message) {
   if (!hdl.expired()) {
     server_.send(hdl, message.dump(), websocketpp::frame::opcode::text);
   } else {
-    LOG_ERROR("Destination hdl invalid");
+    LOG_ERROR("Destination hdl invalid, msg: {}", message.dump());
   }
 }
 
@@ -194,6 +194,8 @@ void SignalServer::OnMessage(websocketpp::connection_hdl hdl,
     case "new_candidate"_H:
       signal_negotiation_->new_candidate(hdl, j);
       break;
+    case "new_candidate_mid"_H:
+      signal_negotiation_->new_candidate_mid(hdl, j);
     default:
       break;
   }
