@@ -165,7 +165,7 @@ std::string DeviceDBManager::GeneratePassword() {
 
 DeviceCredential DeviceDBManager::AddDevice(const std::string& device_id,
                                             const std::string& password) {
-  if (!device_id.empty()) {
+  if (!device_id.empty() && device_id != "web") {
     const char* select_sql =
         "SELECT password_salt, password_hash FROM devices WHERE device_id = ?;";
     sqlite3_stmt* stmt = nullptr;
@@ -215,7 +215,12 @@ DeviceCredential DeviceDBManager::AddDevice(const std::string& device_id,
 
   // Device not exists or device_id is empty — generate new
   for (int i = 0; i < 10; ++i) {
-    std::string new_id = GenerateDeviceId();
+    std::string new_id = device_id + "-" + GenerateDeviceId();
+
+    if(device_id == "web"){
+      return {new_id, "", false};
+    }
+
     std::string new_pwd = GeneratePassword();
 
     std::string salt = GenerateSalt();
