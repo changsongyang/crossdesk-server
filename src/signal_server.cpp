@@ -160,10 +160,6 @@ void SignalServer::SendMsg(websocketpp::connection_hdl hdl, json message) {
 
 void SignalServer::OnMessage(websocketpp::connection_hdl hdl,
                              server::message_ptr msg) {
-  if (transmission_manager_) {
-    transmission_manager_->UpdateWsHandleLastActiveTime(hdl);
-  }
-
   if (!signal_negotiation_) {
     return;
   }
@@ -173,6 +169,14 @@ void SignalServer::OnMessage(websocketpp::connection_hdl hdl,
   std::string type = j["type"].get<std::string>();
 
   switch (HASH_STRING_PIECE(type.c_str())) {
+    case "ping"_H:{
+      if (transmission_manager_) {
+        transmission_manager_->UpdateWsHandleLastActiveTime(hdl);
+        json message = {{"type", "pong"}};
+        server_.send(hdl, message.dump(), websocketpp::frame::opcode::text);
+      }
+      break;
+    }
     case "login"_H:
       signal_negotiation_->login_user(hdl, j);
       break;
