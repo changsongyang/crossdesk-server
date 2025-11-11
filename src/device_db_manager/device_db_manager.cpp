@@ -213,14 +213,14 @@ DeviceCredential DeviceDBManager::AddDevice(const std::string& device_id,
     sqlite3_finalize(stmt);
   }
 
-  // Device not exists or device_id is empty — generate new
+  // Device not exists or device_id is empty — generate new, try 10 times
   for (int i = 0; i < 10; ++i) {
-    std::string new_id = device_id + "-" + GenerateDeviceId();
-
-    if(device_id == "web"){
+    if (device_id == "web") {
+      std::string new_id = device_id + "-" + GenerateDeviceId();
       return {new_id, "", false};
     }
 
+    std::string new_id = GenerateDeviceId();
     std::string new_pwd = GeneratePassword();
 
     std::string salt = GenerateSalt();
