@@ -169,7 +169,7 @@ void SignalServer::OnMessage(websocketpp::connection_hdl hdl,
   std::string type = j["type"].get<std::string>();
 
   switch (HASH_STRING_PIECE(type.c_str())) {
-    case "ping"_H:{
+    case "ping"_H: {
       if (transmission_manager_) {
         transmission_manager_->UpdateWsHandleLastActiveTime(hdl);
         json message = {{"type", "pong"}};
@@ -180,7 +180,7 @@ void SignalServer::OnMessage(websocketpp::connection_hdl hdl,
     case "login"_H:
       signal_negotiation_->login_user(hdl, j);
       break;
-    case "leave_transmission"_H:
+    case "user_leave_transmission"_H:
       signal_negotiation_->leave_transmission(hdl, j);
       break;
     case "query_user_id_list"_H:
