@@ -8,4 +8,5 @@ cert/
 
 # VSCode cache
 .vscode
+.vs
 continuous-desk-server.code-workspace
