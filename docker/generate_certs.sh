@@ -70,8 +70,10 @@ echo "Signing server certificate with root certificate..."
 openssl x509 -req -in "$SERVER_CSR" -CA "$ROOT_CERT" -CAkey "$ROOT_KEY" -CAcreateserial \
   -out "$SERVER_CERT" -days 3650 -sha256 -extfile "$SAN_CONF" -extensions req_ext
 
-# 6. 生成完整链证书
+# 6. 生成完整链证书并更新 bundle.crt（包含服务器证书和根证书）
 cat "$SERVER_CERT" "$ROOT_CERT" > "$FULLCHAIN_CERT"
+# 将完整证书链写入 bundle.crt，这样服务器可以使用完整的证书链
+cp "$FULLCHAIN_CERT" "$SERVER_CERT"
 
 # 7. 清理中间文件
 rm -f "$ROOT_CERT.srl" "$SAN_CONF" "$ROOT_KEY" "$SERVER_CSR" "$FULLCHAIN_CERT"

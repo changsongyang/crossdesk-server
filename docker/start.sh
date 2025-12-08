@@ -80,8 +80,8 @@ exec turnserver -c "$CONF_FILE" &
 
 # start crossdesk-server as main foreground process
 echo "Starting crossdesk-server..."
-# 程序现在使用固定目录：
-# - 数据库和配置文件：/var/lib/crossdesk
-# - 日志文件：/var/log/crossdesk
-# 只需传递端口参数
-./crossdesk-server/crossdesk_server ${CROSSDESK_SERVER_PORT}
+echo "Certificate directory: $CERT_DIR"
+echo "Certificate files:"
+ls -la "$CERT_DIR" || echo "Warning: Cannot list certificate directory"
+
+exec ./crossdesk-server/crossdesk_server ${CROSSDESK_SERVER_PORT}

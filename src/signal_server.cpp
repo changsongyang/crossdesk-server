@@ -1,5 +1,6 @@
 #include "signal_server.h"
 
+#include <filesystem>
 #include <fstream>
 
 #include "common.h"
@@ -113,6 +114,17 @@ context_ptr SignalServer::OnTlsInit(websocketpp::connection_hdl hdl) {
 
     std::string cert_file = certs_dir_ + "/crossdesk.cn_bundle.crt";
     std::string key_file = certs_dir_ + "/crossdesk.cn.key";
+
+    // Check if certificate files exist
+    if (!std::filesystem::exists(cert_file)) {
+      LOG_ERROR("Certificate file not found: {}", cert_file);
+      throw std::runtime_error("Certificate file not found: " + cert_file);
+    }
+    if (!std::filesystem::exists(key_file)) {
+      LOG_ERROR("Private key file not found: {}", key_file);
+      throw std::runtime_error("Private key file not found: " + key_file);
+    }
+
     ctx->use_certificate_chain_file(cert_file);
     ctx->use_private_key_file(key_file, asio::ssl::context::pem);
 
@@ -121,8 +133,11 @@ context_ptr SignalServer::OnTlsInit(websocketpp::connection_hdl hdl) {
                             "ECDHE-RSA-AES256-GCM-SHA384:"
                             "ECDHE-ECDSA-AES128-GCM-SHA256:"
                             "ECDHE-RSA-AES128-GCM-SHA256");
+
+    LOG_INFO("TLS context initialized successfully");
   } catch (std::exception& e) {
-    std::cout << "Exception: " << e.what() << std::endl;
+    LOG_ERROR("Failed to initialize TLS context: {}", e.what());
+    throw;  // Re-throw to prevent invalid context from being used
   }
   return ctx;
 }
@@ -142,12 +157,58 @@ void SignalServer::Run() {
     return;
   }
 
-  server_.set_reuse_addr(true);
-  LOG_INFO("Signal server runs on port [{}]", port_);
+  // Verify certificate files exist
+  std::string cert_file = certs_dir_ + "/crossdesk.cn_bundle.crt";
+  std::string key_file = certs_dir_ + "/crossdesk.cn.key";
+  if (!std::filesystem::exists(cert_file)) {
+    LOG_ERROR("Certificate file not found: {}", cert_file);
+    return;
+  }
+  if (!std::filesystem::exists(key_file)) {
+    LOG_ERROR("Private key file not found: {}", key_file);
+    return;
+  }
 
-  server_.listen(port_);
-  server_.start_accept();
-  server_.run();
+  server_.set_reuse_addr(true);
+  LOG_INFO("Signal server starting on port [{}]", port_);
+  LOG_INFO("Certificate directory: [{}]", certs_dir_);
+  LOG_INFO("Database path: [{}]", db_path_);
+
+  try {
+    // Listen on all interfaces (0.0.0.0)
+    namespace asio = websocketpp::lib::asio;
+    asio::error_code ec;
+    server_.listen(asio::ip::tcp::v4(), port_, ec);
+    if (ec) {
+      LOG_ERROR("Failed to listen on port {}: {}", port_, ec.message());
+      return;
+    }
+    LOG_INFO("Successfully bound to port [{}]", port_);
+
+    server_.start_accept(ec);
+    if (ec) {
+      LOG_ERROR("Failed to start accepting connections: {}", ec.message());
+      return;
+    }
+    LOG_INFO("Signal server listening on port [{}], waiting for connections...",
+             port_);
+
+    server_.run();
+    LOG_INFO("Server run() returned");
+  } catch (std::exception& e) {
+    LOG_ERROR("Server error: {}, attempting to restart...", e.what());
+    // Try to restart the server
+    try {
+      server_.stop();
+      server_.listen(port_);
+      server_.start_accept();
+      server_.run();
+    } catch (std::exception& e2) {
+      LOG_ERROR("Failed to restart server: {}", e2.what());
+    }
+  } catch (...) {
+    LOG_ERROR("Unknown error occurred in server");
+  }
 }
 
 void SignalServer::SendMsg(websocketpp::connection_hdl hdl, json message) {
@@ -164,43 +225,63 @@ void SignalServer::OnMessage(websocketpp::connection_hdl hdl,
     return;
   }
 
-  std::string payload = msg->get_payload();
-  auto j = json::parse(payload);
-  std::string type = j["type"].get<std::string>();
-
-  switch (HASH_STRING_PIECE(type.c_str())) {
-    case "ping"_H: {
-      if (transmission_manager_) {
-        transmission_manager_->UpdateWsHandleLastActiveTime(hdl);
-        json message = {{"type", "pong"}};
-        server_.send(hdl, message.dump(), websocketpp::frame::opcode::text);
-      }
-      break;
+  try {
+    std::string payload = msg->get_payload();
+    json j;
+    try {
+      j = json::parse(payload);
+    } catch (json::parse_error& e) {
+      LOG_ERROR("Failed to parse JSON message: {}", e.what());
+      return;
     }
-    case "login"_H:
-      signal_negotiation_->login_user(hdl, j);
-      break;
-    case "user_leave_transmission"_H:
-      signal_negotiation_->leave_transmission(hdl, j);
-      break;
-    case "query_user_id_list"_H:
-      signal_negotiation_->query_user_id_list(hdl, j);
-      break;
-    case "join_transmission"_H:
-      signal_negotiation_->join_transmission(hdl, j);
-      break;
-    case "offer"_H:
-      signal_negotiation_->offer(hdl, j);
-      break;
-    case "answer"_H:
-      signal_negotiation_->answer(hdl, j);
-      break;
-    case "new_candidate"_H:
-      signal_negotiation_->new_candidate(hdl, j);
-      break;
-    case "new_candidate_mid"_H:
-      signal_negotiation_->new_candidate_mid(hdl, j);
-    default:
-      break;
+
+    if (!j.contains("type")) {
+      LOG_ERROR("Message missing 'type' field");
+      return;
+    }
+
+    std::string type = j["type"].get<std::string>();
+
+    switch (HASH_STRING_PIECE(type.c_str())) {
+      case "ping"_H: {
+        if (transmission_manager_) {
+          transmission_manager_->UpdateWsHandleLastActiveTime(hdl);
+          json message = {{"type", "pong"}};
+          server_.send(hdl, message.dump(), websocketpp::frame::opcode::text);
+        }
+        break;
+      }
+      case "login"_H:
+        signal_negotiation_->login_user(hdl, j);
+        break;
+      case "user_leave_transmission"_H:
+        signal_negotiation_->leave_transmission(hdl, j);
+        break;
+      case "query_user_id_list"_H:
+        signal_negotiation_->query_user_id_list(hdl, j);
+        break;
+      case "join_transmission"_H:
+        signal_negotiation_->join_transmission(hdl, j);
+        break;
+      case "offer"_H:
+        signal_negotiation_->offer(hdl, j);
+        break;
+      case "answer"_H:
+        signal_negotiation_->answer(hdl, j);
+        break;
+      case "new_candidate"_H:
+        signal_negotiation_->new_candidate(hdl, j);
+        break;
+      case "new_candidate_mid"_H:
+        signal_negotiation_->new_candidate_mid(hdl, j);
+        break;
+      default:
+        LOG_WARN("Unknown message type: {}", type);
+        break;
+    }
+  } catch (std::exception& e) {
+    LOG_ERROR("Error processing message: {}", e.what());
+  } catch (...) {
+    LOG_ERROR("Unknown error processing message");
   }
 }

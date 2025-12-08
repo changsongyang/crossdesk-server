@@ -24,8 +24,16 @@ int main(int argc, char* argv[]) {
 
   InitLogger(log_dir);
 
-  SignalServer s(std::stoi(port), certs_dir, db_path);
-  s.Run();
+  try {
+    SignalServer s(std::stoi(port), certs_dir, db_path);
+    s.Run();
+  } catch (std::exception& e) {
+    LOG_ERROR("Fatal error: {}", e.what());
+    return 1;
+  } catch (...) {
+    LOG_ERROR("Unknown fatal error occurred");
+    return 1;
+  }
 
   return 0;
 }
