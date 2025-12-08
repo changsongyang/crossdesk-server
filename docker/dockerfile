@@ -29,8 +29,9 @@ RUN mkdir -p /opt/turnserver && \
 
 
 COPY docker/start.sh /start.sh
+COPY docker/generate_certs.sh /docker/generate_certs.sh
 COPY --from=builder /output/crossdesk_server /crossdesk-server/crossdesk_server
 
-RUN chmod +x /start.sh /crossdesk-server/crossdesk_server
+RUN chmod +x /start.sh /docker/generate_certs.sh /crossdesk-server/crossdesk_server
 
 ENTRYPOINT ["/start.sh"]

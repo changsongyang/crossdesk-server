@@ -14,24 +14,12 @@
 
 int main(int argc, char* argv[]) {
   std::string port = "9090";
-  std::string log_dir = "./logs";
-  std::string certs_dir = "./cert";
-  std::string db_path = "devices.db";
+  std::string log_dir = "/var/log/crossdesk";
+  std::string certs_dir = "/var/lib/crossdesk/certs";
+  std::string db_path = "/var/lib/crossdesk/db/crossdesk-server.db";
 
   if (argc > 1) {
     port = argv[1];
-  }
-
-  if (argc > 2) {
-    certs_dir = argv[2];
-  }
-
-  if (argc > 3) {
-    db_path = argv[3];
-  }
-
-  if (argc > 4) {
-    log_dir = argv[4];
   }
 
   InitLogger(log_dir);

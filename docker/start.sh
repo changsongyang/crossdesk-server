@@ -28,6 +28,30 @@ if [ -z "$MIN_PORT" ] || [ -z "$MAX_PORT" ]; then
   exit 1
 fi
 
+# check and generate certificates if needed
+CERT_DIR="/var/lib/crossdesk/certs"
+CERT_KEY="$CERT_DIR/crossdesk.cn.key"
+CERT_BUNDLE="$CERT_DIR/crossdesk.cn_bundle.crt"
+CERT_ROOT="$CERT_DIR/crossdesk.cn_root.crt"
+
+if [ ! -f "$CERT_KEY" ] || [ ! -f "$CERT_BUNDLE" ] || [ ! -f "$CERT_ROOT" ]; then
+  echo "Certificate files not found, generating certificates..."
+  mkdir -p "$CERT_DIR"
+  
+  # Run generate_certs.sh with EXTERNAL_IP and output directory
+  bash /docker/generate_certs.sh "$EXTERNAL_IP" "$CERT_DIR"
+  
+  # Verify certificates were generated
+  if [ ! -f "$CERT_KEY" ] || [ ! -f "$CERT_BUNDLE" ] || [ ! -f "$CERT_ROOT" ]; then
+    echo "Error: Failed to generate certificate files"
+    exit 1
+  fi
+  
+  echo "Certificates generated successfully"
+else
+  echo "Certificate files found, skipping generation"
+fi
+
 # generate coturn configuration file
 mkdir -p /etc/coturn
 cat > "$CONF_FILE" <<EOF
@@ -44,7 +68,7 @@ user=crossdesk:crossdeskpw
 realm=crossdesk
 cert=${CERT_FILE}
 pkey=${PKEY_FILE}
-log-file=/crossdesk-server/logs/turn.log
+log-file=/var/log/crossdesk/turn.log
 no-cli
 EOF
 
@@ -56,8 +80,8 @@ exec turnserver -c "$CONF_FILE" &
 
 # start crossdesk-server as main foreground process
 echo "Starting crossdesk-server..."
-./crossdesk-server/crossdesk_server \
-    ${CROSSDESK_SERVER_PORT} \
-    /crossdesk-server/certs/ \
-    /crossdesk-server/db/crossdesk_server.db \
-    /crossdesk-server/logs
+# 程序现在使用固定目录：
+# - 数据库和配置文件：/var/lib/crossdesk
+# - 日志文件：/var/log/crossdesk
+# 只需传递端口参数
+./crossdesk-server/crossdesk_server ${CROSSDESK_SERVER_PORT}
