@@ -1,10 +1,17 @@
 # CrossDesk Server
 
-[中文](README_CN.md) / [English](README.md)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-brightgreen.svg)]()
+[![License: LGPL v3](https://img.shields.io/badge/License-LGPL%20v3-blue.svg)](https://www.gnu.org/licenses/lgpl-3.0)
+[![GitHub last commit](https://img.shields.io/github/last-commit/kunkundi/crossdesk-server)](https://github.com/kunkundi/crossdesk-server/commits/web-client)
+[![Build Status](https://github.com/kunkundi/crossdesk-server/actions/workflows/build.yml/badge.svg)](https://github.com/kunkundi/crossdesk/actions)  
+[![Docker Pulls](https://img.shields.io/docker/pulls/crossdesk/crossdesk-server)](https://hub.docker.com/r/crossdesk/crossdesk-server/tags)
+[![GitHub issues](https://img.shields.io/github/issues/kunkundi/crossdesk-server.svg)]()
+[![GitHub stars](https://img.shields.io/github/stars/kunkundi/crossdesk-server.svg?style=social)]()
+[![GitHub forks](https://img.shields.io/github/forks/kunkundi/crossdesk-server.svg?style=social)]()
+
+[ [中文](README.md) / English ]
 
 Server designed for [CrossDesk](https://github.com/kunkundi/crossdesk) , supporting WSS-encrypted connections and using SQLite3 to store user information.
-
-[License: LGPL-3.0](LICENSE) | [Platform: Windows | Linux | macOS]
 
 ---
 
@@ -45,11 +52,9 @@ sudo docker build -t image-name .
 
 ## Run Container
 
-### Basic Startup (Data stored in container)
-
-Example startup command:
-```bash
-docker run -d \
+### Startup Command
+```
+sudo docker run -d \
   --name crossdesk_server \
   --network host \
   -e EXTERNAL_IP=xxx.xxx.xxx.xxx \
@@ -63,22 +68,52 @@ docker run -d \
   crossdesk/crossdesk-server:v1.1.2
 ```
 
-**Notes**:
-- Certificate files will be automatically generated on first startup in `/var/lib/crossdesk/certs` (inside container)
-- Database file will be automatically created at `/var/lib/crossdesk/db/crossdesk-server.db` (inside container)
-- Log files will be automatically created in `/var/log/crossdesk/` (inside container)
-- **Note**: Data will be lost if container is removed without volume mounts
-- `-v /var/lib/crossdesk:/var/lib/crossdesk`: Persist database and certificate files to host
-- `-v /var/log/crossdesk:/var/log/crossdesk`: Persist log files to host
-- Data will remain on host even if container is removed
-- **Auto directory creation**: If these directories don't exist on host, Docker will create them automatically, and the container code will also create subdirectories
-- **Permission note (Important)**: If Docker auto-created directories have insufficient permissions (owned by root), the container user cannot write, which will cause:
-  - Certificate generation failure, container startup script will exit with error
-  - Database directory creation failure, program will throw exception and crash
-  - Log directory creation failure, log files cannot be written (but program may continue running)
-  
-  Solution: Set permissions manually before starting container:
-  ```bash
-  sudo mkdir -p /var/lib/crossdesk /var/log/crossdesk
-  sudo chown -R $(id -u):$(id -g) /var/lib/crossdesk /var/log/crossdesk
-  ```
+The parameters you need to pay attention to are as follows:
+
+**Parameters**
+- **EXTERNAL_IP**: The server’s public IP. This corresponds to **Server Address** in the CrossDesk client’s **Self-Hosted Server Configuration**.
+- **INTERNAL_IP**: The server’s internal IP.
+- **CROSSDESK_SERVER_PORT**: The port used by the self-hosted service. This corresponds to **Server Port** in the CrossDesk client’s **Self-Hosted Server Configuration**.
+- **COTURN_PORT**: The port used by the COTURN service. This corresponds to **Relay Service Port** in the CrossDesk client’s **Self-Hosted Server Configuration**.
+- **MIN_PORT / MAX_PORT**: The port range used by the COTURN service. Example: `MIN_PORT=50000`, `MAX_PORT=60000`. Adjust the range depending on the number of clients.
+- `-v /var/lib/crossdesk:/var/lib/crossdesk`: Persists database and certificate files on the host machine.
+- `-v /var/log/crossdesk:/var/log/crossdesk`: Persists log files on the host machine.
+
+**Example**:
+```bash
+sudo docker run -d \
+  --name crossdesk_server \
+  --network host \
+  -e EXTERNAL_IP=114.114.114.114 \
+  -e INTERNAL_IP=10.0.0.1 \
+  -e CROSSDESK_SERVER_PORT=9099 \
+  -e COTURN_PORT=3478 \
+  -e MIN_PORT=50000 \
+  -e MAX_PORT=60000 \
+  -v /var/lib/crossdesk:/var/lib/crossdesk \
+  -v /var/log/crossdesk:/var/log/crossdesk \
+  crossdesk/crossdesk-server:v1.1.2
+```
+
+**Notes**
+- **The server must open the following ports: COTURN_PORT/udp, COTURN_PORT/tcp, MIN_PORT–MAX_PORT/udp, and CROSSDESK_SERVER_PORT/tcp.**
+- If you don’t mount volumes, all data will be lost when the container is removed.
+- Certificate files will be automatically generated on first startup and persisted to the host at `/var/lib/crossdesk/certs`.
+- The database file will be automatically created and stored at `/var/lib/crossdesk/db/crossdesk-server.db`.
+- Log files will be created and stored at `/var/log/crossdesk/`.
+
+**Permission Notice**
+If the directories automatically created by Docker belong to root and have insufficient write permissions, the container user may not be able to write to them. This can cause:
+  - Certificate generation failure, leading to startup script errors and container exit.
+  - Database directory creation failure, causing the program to throw exceptions and crash.
+  - Log directory creation failure, preventing logs from being written (though the program may continue running).
+
+**Solution:** Manually set permissions before starting the container:
+```bash
+sudo mkdir -p /var/lib/crossdesk /var/log/crossdesk
+sudo chown -R $(id -u):$(id -g) /var/lib/crossdesk /var/log/crossdesk
+```
+
+### Certificate Files
+You can find the certificate file `crossdesk.cn_root.crt` at `/var/lib/crossdesk/certs` on the host machine.
+Download it to your client device and select it in the **Certificate File Path** field under the CrossDesk client’s **Self-Hosted Server Settings**.
