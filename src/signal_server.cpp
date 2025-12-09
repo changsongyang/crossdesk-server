@@ -133,8 +133,6 @@ context_ptr SignalServer::OnTlsInit(websocketpp::connection_hdl hdl) {
                             "ECDHE-RSA-AES256-GCM-SHA384:"
                             "ECDHE-ECDSA-AES128-GCM-SHA256:"
                             "ECDHE-RSA-AES128-GCM-SHA256");
-
-    LOG_INFO("TLS context initialized successfully");
   } catch (std::exception& e) {
     LOG_ERROR("Failed to initialize TLS context: {}", e.what());
     throw;  // Re-throw to prevent invalid context from being used
