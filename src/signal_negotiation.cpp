@@ -34,6 +34,17 @@ bool SignalNegotiation::login_user(websocketpp::connection_hdl hdl,
     std::string ret_password = dev_cred.password;
     bool update_password = dev_cred.update;
 
+    // Check if AddDevice failed
+    if (ret_host_id.empty()) {
+      LOG_ERROR("Failed to add device for host_id [{}]", host_id);
+      json message = {{"type", "login"},
+                      {"user_id", ""},
+                      {"status", "fail"},
+                      {"reason", "Failed to register device"}};
+      send_msg_(hdl, message);
+      return true;
+    }
+
     bool update_success = ret_host_id != "" && update_password;
     bool login_success =
         (ret_host_id != "" && ret_password == "") && !update_password;

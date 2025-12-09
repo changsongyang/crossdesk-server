@@ -22,6 +22,8 @@ DeviceDBManager::DeviceDBManager(const std::string& db_path) : db_(nullptr) {
 
   if (sqlite3_open(db_path.c_str(), &db_) != SQLITE_OK) {
     LOG_ERROR("Failed to open database, {}", sqlite3_errmsg(db_));
+    db_ = nullptr;
+    return;
   }
   InitDB();
 }
@@ -31,6 +33,11 @@ DeviceDBManager::~DeviceDBManager() {
 }
 
 void DeviceDBManager::InitDB() {
+  if (db_ == nullptr) {
+    LOG_ERROR("Database is not initialized in InitDB.");
+    return;
+  }
+
   const char* sql_devices =
       "CREATE TABLE IF NOT EXISTS devices ("
       "id INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -98,6 +105,11 @@ std::string DeviceDBManager::HashPasswordWithSalt(const std::string& salt,
 }
 
 std::string DeviceDBManager::GenerateDeviceId() {
+  if (db_ == nullptr) {
+    LOG_ERROR("Database is not initialized in GenerateDeviceId.");
+    return {};
+  }
+
   sqlite3_exec(db_, "BEGIN TRANSACTION;", nullptr, nullptr, nullptr);
 
   sqlite3_stmt* stmt = nullptr;
@@ -165,6 +177,11 @@ std::string DeviceDBManager::GeneratePassword() {
 
 DeviceCredential DeviceDBManager::AddDevice(const std::string& device_id,
                                             const std::string& password) {
+  if (db_ == nullptr) {
+    LOG_ERROR("Database is not initialized.");
+    return {};
+  }
+
   if (!device_id.empty() && device_id != "web") {
     const char* select_sql =
         "SELECT password_salt, password_hash FROM devices WHERE device_id = ?;";
@@ -221,7 +238,16 @@ DeviceCredential DeviceDBManager::AddDevice(const std::string& device_id,
     }
 
     std::string new_id = GenerateDeviceId();
+    if (new_id.empty()) {
+      LOG_ERROR("Failed to generate device ID.");
+      return {};
+    }
+
     std::string new_pwd = GeneratePassword();
+    if (new_pwd.empty()) {
+      LOG_ERROR("Failed to generate password.");
+      return {};
+    }
 
     std::string salt = GenerateSalt();
     std::string hash = HashPasswordWithSalt(salt, new_pwd);
