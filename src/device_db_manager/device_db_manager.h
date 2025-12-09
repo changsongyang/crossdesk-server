@@ -40,6 +40,7 @@ class DeviceDBManager {
   std::string GenerateDeviceId();
   std::string GeneratePassword();
   std::string GenerateSalt();
+  bool DeviceIdExists(const std::string& device_id);
 
   std::string HashPasswordWithSalt(const std::string& salt,
                                    const std::string& password);

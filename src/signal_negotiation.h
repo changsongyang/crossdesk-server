@@ -33,6 +33,7 @@ class SignalNegotiation {
   bool answer(websocketpp::connection_hdl hdl, const json& j);
   bool new_candidate(websocketpp::connection_hdl hdl, const json& j);
   bool new_candidate_mid(websocketpp::connection_hdl hdl, const json& j);
+  void OnWebClientDisconnect(const std::string& user_id);
 
  private:
   std::shared_ptr<TransmissionManager> transmission_manager_;

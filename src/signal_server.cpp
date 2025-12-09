@@ -88,6 +88,10 @@ bool SignalServer::OnClose(websocketpp::connection_hdl hdl) {
   if (!user_id.empty()) {
     LOG_INFO("Websocket connection [{}|{}] closed", ws_connections_[hdl],
              user_id);
+    // Remove web client from database on disconnect
+    if (signal_negotiation_) {
+      signal_negotiation_->OnWebClientDisconnect(user_id);
+    }
   }
   ws_connections_.erase(hdl);
   return true;
@@ -98,6 +102,10 @@ bool SignalServer::OnFail(websocketpp::connection_hdl hdl) {
   if (!user_id.empty()) {
     LOG_INFO("Websocket connection [{}|{}] failed", ws_connections_[hdl],
              user_id);
+    // Remove web client from database on disconnect
+    if (signal_negotiation_) {
+      signal_negotiation_->OnWebClientDisconnect(user_id);
+    }
   }
   return true;
 }

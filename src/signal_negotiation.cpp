@@ -328,3 +328,19 @@ bool SignalNegotiation::new_candidate_mid(websocketpp::connection_hdl hdl,
 
   return true;
 }
+
+void SignalNegotiation::OnWebClientDisconnect(const std::string& user_id) {
+  // Extract pure user_id (remove password part if exists)
+  std::string pure_user_id = user_id;
+  size_t at_pos = user_id.find("@");
+  if (at_pos != std::string::npos) {
+    pure_user_id = user_id.substr(0, at_pos);
+  }
+
+  // Check if this is a web client (starts with "web-")
+  if (pure_user_id.find("web-") == 0) {
+    if (!device_db_manager_->RemoveDevice(pure_user_id)) {
+      LOG_WARN("Failed to remove web client device [{}] from database", pure_user_id);
+    }
+  }
+}
