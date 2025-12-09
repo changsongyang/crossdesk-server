@@ -34,7 +34,7 @@ CERT_KEY="$CERT_DIR/crossdesk.cn.key"
 CERT_BUNDLE="$CERT_DIR/crossdesk.cn_bundle.crt"
 CERT_ROOT="$CERT_DIR/crossdesk.cn_root.crt"
 
-if [ ! -f "$CERT_KEY" ] || [ ! -f "$CERT_BUNDLE" ] || [ ! -f "$CERT_ROOT" ]; then
+if [ ! -f "$CERT_KEY" ] || [ ! -f "$CERT_BUNDLE" ]; then
   echo "Certificate files not found, generating certificates..."
   mkdir -p "$CERT_DIR"
   
