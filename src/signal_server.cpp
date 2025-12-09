@@ -120,8 +120,8 @@ context_ptr SignalServer::OnTlsInit(websocketpp::connection_hdl hdl) {
         asio::ssl::context::default_workarounds | asio::ssl::context::no_sslv2 |
         asio::ssl::context::no_sslv3 | asio::ssl::context::single_dh_use);
 
-    std::string cert_file = certs_dir_ + "/crossdesk.cn_bundle.crt";
-    std::string key_file = certs_dir_ + "/crossdesk.cn.key";
+    std::string cert_file = certs_dir_ + "/api.crossdesk.cn_bundle.crt";
+    std::string key_file = certs_dir_ + "/api.crossdesk.cn.key";
 
     // Check if certificate files exist
     if (!std::filesystem::exists(cert_file)) {
@@ -164,8 +164,8 @@ void SignalServer::Run() {
   }
 
   // Verify certificate files exist
-  std::string cert_file = certs_dir_ + "/crossdesk.cn_bundle.crt";
-  std::string key_file = certs_dir_ + "/crossdesk.cn.key";
+  std::string cert_file = certs_dir_ + "/api.crossdesk.cn_bundle.crt";
+  std::string key_file = certs_dir_ + "/api.crossdesk.cn.key";
   if (!std::filesystem::exists(cert_file)) {
     LOG_ERROR("Certificate file not found: {}", cert_file);
     return;

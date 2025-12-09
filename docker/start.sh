@@ -30,9 +30,9 @@ fi
 
 # check and generate certificates if needed
 CERT_DIR="/var/lib/crossdesk/certs"
-CERT_KEY="$CERT_DIR/crossdesk.cn.key"
-CERT_BUNDLE="$CERT_DIR/crossdesk.cn_bundle.crt"
-CERT_ROOT="$CERT_DIR/crossdesk.cn_root.crt"
+CERT_KEY="$CERT_DIR/api.crossdesk.cn.key"
+CERT_BUNDLE="$CERT_DIR/api.crossdesk.cn_bundle.crt"
+CERT_ROOT="$CERT_DIR/api.crossdesk.cn_root.crt"
 
 if [ ! -f "$CERT_KEY" ] || [ ! -f "$CERT_BUNDLE" ]; then
   echo "Certificate files not found, generating certificates..."

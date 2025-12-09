@@ -19,12 +19,12 @@ mkdir -p "$OUTPUT_DIR"
 cd "$OUTPUT_DIR"
 
 # 文件名（使用完整路径）
-ROOT_KEY="$OUTPUT_DIR/crossdesk.cn_root.key"
-ROOT_CERT="$OUTPUT_DIR/crossdesk.cn_root.crt"
-SERVER_KEY="$OUTPUT_DIR/crossdesk.cn.key"
-SERVER_CSR="$OUTPUT_DIR/crossdesk.cn.csr"
-SERVER_CERT="$OUTPUT_DIR/crossdesk.cn_bundle.crt"
-FULLCHAIN_CERT="$OUTPUT_DIR/crossdesk.cn_fullchain.crt"
+ROOT_KEY="$OUTPUT_DIR/api.crossdesk.cn_root.key"
+ROOT_CERT="$OUTPUT_DIR/api.crossdesk.cn_root.crt"
+SERVER_KEY="$OUTPUT_DIR/api.crossdesk.cn.key"
+SERVER_CSR="$OUTPUT_DIR/api.crossdesk.cn.csr"
+SERVER_CERT="$OUTPUT_DIR/api.crossdesk.cn_bundle.crt"
+FULLCHAIN_CERT="$OUTPUT_DIR/api.crossdesk.cn_fullchain.crt"
 SAN_CONF="$OUTPUT_DIR/san.cnf"
 
 # 证书主题
