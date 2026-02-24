@@ -115,12 +115,15 @@ bool TransmissionManager::BindUserToWsHandle(const std::string& user_id,
 bool TransmissionManager::ReleaseGuestFromTransmission(
     const std::string& guest_id) {
   std::lock_guard<std::recursive_mutex> lock(ws_hdl_alive_checker_mutex_);
-  for (auto& pair : transmission_guest_id_list_) {
-    auto& list = pair.second;
+  for (auto map_it = transmission_guest_id_list_.begin();
+       map_it != transmission_guest_id_list_.end(); ++map_it) {
+    auto& list = map_it->second;
     auto it = std::find(list.begin(), list.end(), guest_id);
     if (it != list.end()) {
       list.erase(it);
-      if (list.empty()) transmission_guest_id_list_.erase(pair.first);
+      if (list.empty()) {
+        transmission_guest_id_list_.erase(map_it);
+      }
       return true;
     }
   }
@@ -144,7 +147,12 @@ std::string TransmissionManager::ReleaseUserFromWsHandle(
 websocketpp::connection_hdl TransmissionManager::GetWsHandle(
     const std::string& user_id) {
   std::lock_guard<std::recursive_mutex> lock(ws_hdl_alive_checker_mutex_);
-  return user_id_ws_hdl_list_[user_id];
+  auto it = user_id_ws_hdl_list_.find(user_id);
+  if (it != user_id_ws_hdl_list_.end()) {
+    return it->second;
+  }
+
+  return websocketpp::connection_hdl();
 }
 
 std::string TransmissionManager::GetUserId(websocketpp::connection_hdl hdl) {
