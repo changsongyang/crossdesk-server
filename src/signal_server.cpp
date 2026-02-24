@@ -26,7 +26,7 @@ SignalServer::SignalServer() {
   server_.set_ping_handler(std::bind(&SignalServer::OnPing, this,
                                      std::placeholders::_1,
                                      std::placeholders::_2));
-  server_.set_pong_handler(std::bind(&SignalServer::OnPing, this,
+  server_.set_pong_handler(std::bind(&SignalServer::OnPong, this,
                                      std::placeholders::_1,
                                      std::placeholders::_2));
 
@@ -64,7 +64,7 @@ SignalServer::SignalServer(uint16_t port, std::string certs_dir,
   server_.set_ping_handler(std::bind(&SignalServer::OnPing, this,
                                      std::placeholders::_1,
                                      std::placeholders::_2));
-  server_.set_pong_handler(std::bind(&SignalServer::OnPing, this,
+  server_.set_pong_handler(std::bind(&SignalServer::OnPong, this,
                                      std::placeholders::_1,
                                      std::placeholders::_2));
 
@@ -85,9 +85,11 @@ bool SignalServer::OnOpen(websocketpp::connection_hdl hdl) {
 
 bool SignalServer::OnClose(websocketpp::connection_hdl hdl) {
   std::string user_id = transmission_manager_->ReleaseUserFromWsHandle(hdl);
+  auto conn_it = ws_connections_.find(hdl);
+  connection_id conn_id =
+      (conn_it != ws_connections_.end()) ? conn_it->second : 0;
   if (!user_id.empty()) {
-    LOG_INFO("Websocket connection [{}|{}] closed", ws_connections_[hdl],
-             user_id);
+    LOG_INFO("Websocket connection [{}|{}] closed", conn_id, user_id);
     // Remove web client from database on disconnect
     if (signal_negotiation_) {
       signal_negotiation_->OnWebClientDisconnect(user_id);
@@ -99,14 +101,17 @@ bool SignalServer::OnClose(websocketpp::connection_hdl hdl) {
 
 bool SignalServer::OnFail(websocketpp::connection_hdl hdl) {
   std::string user_id = transmission_manager_->ReleaseUserFromWsHandle(hdl);
+  auto conn_it = ws_connections_.find(hdl);
+  connection_id conn_id =
+      (conn_it != ws_connections_.end()) ? conn_it->second : 0;
   if (!user_id.empty()) {
-    LOG_INFO("Websocket connection [{}|{}] failed", ws_connections_[hdl],
-             user_id);
+    LOG_INFO("Websocket connection [{}|{}] failed", conn_id, user_id);
     // Remove web client from database on disconnect
     if (signal_negotiation_) {
       signal_negotiation_->OnWebClientDisconnect(user_id);
     }
   }
+  ws_connections_.erase(hdl);
   return true;
 }
 
@@ -149,11 +154,11 @@ context_ptr SignalServer::OnTlsInit(websocketpp::connection_hdl hdl) {
 }
 
 bool SignalServer::OnPing(websocketpp::connection_hdl hdl, std::string s) {
-  transmission_manager_->UpdateWsHandleLastActiveTime(hdl);
   return true;
 }
 
 bool SignalServer::OnPong(websocketpp::connection_hdl hdl, std::string s) {
+  transmission_manager_->UpdateWsHandleLastActiveTime(hdl);
   return true;
 }
 
@@ -218,10 +223,17 @@ void SignalServer::Run() {
 }
 
 void SignalServer::SendMsg(websocketpp::connection_hdl hdl, json message) {
-  if (!hdl.expired()) {
-    server_.send(hdl, message.dump(), websocketpp::frame::opcode::text);
-  } else {
+  if (hdl.expired()) {
     LOG_ERROR("Destination hdl invalid, msg: {}", message.dump());
+    return;
+  }
+
+  try {
+    server_.send(hdl, message.dump(), websocketpp::frame::opcode::text);
+  } catch (const std::exception& e) {
+    LOG_ERROR("Failed to send message: {}", e.what());
+  } catch (...) {
+    LOG_ERROR("Failed to send message: unknown error");
   }
 }
 
@@ -241,7 +253,7 @@ void SignalServer::OnMessage(websocketpp::connection_hdl hdl,
       return;
     }
 
-    if (!j.contains("type")) {
+    if (!j.contains("type") || !j["type"].is_string()) {
       LOG_ERROR("Message missing 'type' field");
       return;
     }

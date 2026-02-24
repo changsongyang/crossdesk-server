@@ -42,9 +42,9 @@ class SignalServer {
 
  private:
   server server_;
-  uint16_t port_;
-  std::string certs_dir_;
-  std::string db_path_;
+  uint16_t port_ = 9090;
+  std::string certs_dir_ = "/var/lib/crossdesk/certs";
+  std::string db_path_ = "/var/lib/crossdesk/db/crossdesk-server.db";
   std::map<websocketpp::connection_hdl, connection_id,
            std::owner_less<websocketpp::connection_hdl>>
       ws_connections_;
