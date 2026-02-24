@@ -2,6 +2,18 @@
 
 #include "log.h"
 
+namespace {
+
+bool GetStringField(const json& j, const char* key, std::string& value) {
+  if (!j.contains(key) || !j[key].is_string()) {
+    return false;
+  }
+  value = j[key].get<std::string>();
+  return true;
+}
+
+}  // namespace
+
 SignalNegotiation::SignalNegotiation(
     std::shared_ptr<TransmissionManager> transmission_manager,
     std::string db_path)
@@ -13,7 +25,12 @@ SignalNegotiation::~SignalNegotiation() {}
 
 bool SignalNegotiation::login_user(websocketpp::connection_hdl hdl,
                                    const json& j) {
-  std::string host_id_with_pwd = j["user_id"].get<std::string>();
+  std::string host_id_with_pwd;
+  if (!GetStringField(j, "user_id", host_id_with_pwd)) {
+    LOG_ERROR("login_user missing or invalid field: user_id");
+    return false;
+  }
+
   std::string host_id;
   std::string password;
   std::string return_host_id;
@@ -96,8 +113,14 @@ bool SignalNegotiation::login_user(websocketpp::connection_hdl hdl,
 
 bool SignalNegotiation::leave_transmission(websocketpp::connection_hdl hdl,
                                            const json& j) {
-  std::string transmission_id = j["transmission_id"].get<std::string>();
-  std::string user_id = j["user_id"].get<std::string>();
+  std::string transmission_id;
+  std::string user_id;
+  if (!GetStringField(j, "transmission_id", transmission_id) ||
+      !GetStringField(j, "user_id", user_id)) {
+    LOG_ERROR("leave_transmission missing required fields");
+    return false;
+  }
+
   LOG_INFO("[{}] leaves transmission [{}]", user_id.c_str(),
            transmission_id.c_str());
 
@@ -131,7 +154,12 @@ bool SignalNegotiation::leave_transmission(websocketpp::connection_hdl hdl,
 
 bool SignalNegotiation::query_user_id_list(websocketpp::connection_hdl hdl,
                                            const json& j) {
-  std::string transmission_id_pwd = j["transmission_id"].get<std::string>();
+  std::string transmission_id_pwd;
+  if (!GetStringField(j, "transmission_id", transmission_id_pwd)) {
+    LOG_ERROR("query_user_id_list missing or invalid field: transmission_id");
+    return false;
+  }
+
   std::string transmission_id;
   std::string password;
 
@@ -181,7 +209,12 @@ bool SignalNegotiation::query_user_id_list(websocketpp::connection_hdl hdl,
 
 bool SignalNegotiation::join_transmission(websocketpp::connection_hdl hdl,
                                           const json& j) {
-  std::string transmission_id_pwd = j["transmission_id"].get<std::string>();
+  std::string transmission_id_pwd;
+  if (!GetStringField(j, "transmission_id", transmission_id_pwd)) {
+    LOG_ERROR("join_transmission missing or invalid field: transmission_id");
+    return false;
+  }
+
   std::string transmission_id;
   std::string password;
 
@@ -194,7 +227,12 @@ bool SignalNegotiation::join_transmission(websocketpp::connection_hdl hdl,
     password = "";
   }
 
-  std::string user_id = j["user_id"].get<std::string>();
+  std::string user_id;
+  if (!GetStringField(j, "user_id", user_id)) {
+    LOG_ERROR("join_transmission missing or invalid field: user_id");
+    return false;
+  }
+
   LOG_INFO("[{}] joins transmission [{}]", user_id.c_str(),
            transmission_id.c_str());
 
@@ -237,17 +275,23 @@ bool SignalNegotiation::join_transmission(websocketpp::connection_hdl hdl,
 }
 
 bool SignalNegotiation::offer(websocketpp::connection_hdl hdl, const json& j) {
-  std::string transmission_id = j["transmission_id"].get<std::string>();
-  std::string remote_user_id = j["remote_user_id"].get<std::string>();
-  std::string user_id = j["user_id"].get<std::string>();
+  std::string transmission_id;
+  std::string remote_user_id;
+  std::string user_id;
+  if (!GetStringField(j, "transmission_id", transmission_id) ||
+      !GetStringField(j, "remote_user_id", remote_user_id) ||
+      !GetStringField(j, "user_id", user_id)) {
+    LOG_ERROR("offer missing required fields");
+    return false;
+  }
 
   transmission_manager_->BindGuestToTransmission(user_id, transmission_id);
 
   websocketpp::connection_hdl destination_hdl =
       transmission_manager_->GetWsHandle(remote_user_id);
 
-  if (j.contains("sdp")) {
-    std::string sdp = j["sdp"].get<std::string>();
+  std::string sdp;
+  if (GetStringField(j, "sdp", sdp)) {
     json message = {
         {"type", "offer"},
         {"transmission_id", transmission_id},
@@ -265,15 +309,21 @@ bool SignalNegotiation::offer(websocketpp::connection_hdl hdl, const json& j) {
 }
 
 bool SignalNegotiation::answer(websocketpp::connection_hdl hdl, const json& j) {
-  std::string transmission_id = j["transmission_id"].get<std::string>();
-  std::string remote_user_id = j["remote_user_id"].get<std::string>();
-  std::string user_id = j["user_id"].get<std::string>();
+  std::string transmission_id;
+  std::string remote_user_id;
+  std::string user_id;
+  if (!GetStringField(j, "transmission_id", transmission_id) ||
+      !GetStringField(j, "remote_user_id", remote_user_id) ||
+      !GetStringField(j, "user_id", user_id)) {
+    LOG_ERROR("answer missing required fields");
+    return false;
+  }
 
   websocketpp::connection_hdl destination_hdl =
       transmission_manager_->GetWsHandle(remote_user_id);
 
-  if (j.contains("sdp")) {
-    std::string sdp = j["sdp"].get<std::string>();
+  std::string sdp;
+  if (GetStringField(j, "sdp", sdp)) {
     json message = {{"type", "answer"},
                     {"sdp", sdp},
                     {"remote_user_id", user_id},
@@ -289,10 +339,17 @@ bool SignalNegotiation::answer(websocketpp::connection_hdl hdl, const json& j) {
 
 bool SignalNegotiation::new_candidate(websocketpp::connection_hdl hdl,
                                       const json& j) {
-  std::string transmission_id = j["transmission_id"].get<std::string>();
-  std::string candidate = j["sdp"].get<std::string>();
-  std::string user_id = j["user_id"].get<std::string>();
-  std::string remote_user_id = j["remote_user_id"].get<std::string>();
+  std::string transmission_id;
+  std::string candidate;
+  std::string user_id;
+  std::string remote_user_id;
+  if (!GetStringField(j, "transmission_id", transmission_id) ||
+      !GetStringField(j, "sdp", candidate) ||
+      !GetStringField(j, "user_id", user_id) ||
+      !GetStringField(j, "remote_user_id", remote_user_id)) {
+    LOG_ERROR("new_candidate missing required fields");
+    return false;
+  }
 
   websocketpp::connection_hdl destination_hdl =
       transmission_manager_->GetWsHandle(remote_user_id);
@@ -309,11 +366,19 @@ bool SignalNegotiation::new_candidate(websocketpp::connection_hdl hdl,
 
 bool SignalNegotiation::new_candidate_mid(websocketpp::connection_hdl hdl,
                                           const json& j) {
-  std::string transmission_id = j["transmission_id"].get<std::string>();
-  std::string user_id = j["user_id"].get<std::string>();
-  std::string remote_user_id = j["remote_user_id"].get<std::string>();
-  std::string candidate = j["candidate"].get<std::string>();
-  std::string mid = j["mid"].get<std::string>();
+  std::string transmission_id;
+  std::string user_id;
+  std::string remote_user_id;
+  std::string candidate;
+  std::string mid;
+  if (!GetStringField(j, "transmission_id", transmission_id) ||
+      !GetStringField(j, "user_id", user_id) ||
+      !GetStringField(j, "remote_user_id", remote_user_id) ||
+      !GetStringField(j, "candidate", candidate) ||
+      !GetStringField(j, "mid", mid)) {
+    LOG_ERROR("new_candidate_mid missing required fields");
+    return false;
+  }
 
   websocketpp::connection_hdl destination_hdl =
       transmission_manager_->GetWsHandle(remote_user_id);
@@ -340,7 +405,8 @@ void SignalNegotiation::OnWebClientDisconnect(const std::string& user_id) {
   // Check if this is a web client (starts with "web-")
   if (pure_user_id.find("web-") == 0) {
     if (!device_db_manager_->RemoveDevice(pure_user_id)) {
-      LOG_WARN("Failed to remove web client device [{}] from database", pure_user_id);
+      LOG_WARN("Failed to remove web client device [{}] from database",
+               pure_user_id);
     }
   }
 }
