@@ -20,8 +20,9 @@ DeviceDBManager::DeviceDBManager(const std::string& db_path) : db_(nullptr) {
                              std::string(e.what()));
   }
 
-  if (sqlite3_open(db_path.c_str(), &db_) != SQLITE_OK) {
-    LOG_ERROR("Failed to open database, {}", sqlite3_errmsg(db_));
+  int rc = sqlite3_open(db_path.c_str(), &db_);
+  if (rc != SQLITE_OK) {
+    LOG_ERROR("Failed to open database, {}", sqlite3_errstr(rc));
     db_ = nullptr;
     return;
   }
@@ -111,7 +112,7 @@ bool DeviceDBManager::DeviceIdExists(const std::string& device_id) {
 
   const char* sql = "SELECT 1 FROM devices WHERE device_id = ? LIMIT 1;";
   sqlite3_stmt* stmt = nullptr;
-  
+
   if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
     return false;
   }
@@ -140,7 +141,7 @@ std::string DeviceDBManager::GenerateDeviceId() {
   // try to generate unique ID
   for (int attempt = 0; attempt < MAX_RETRIES; ++attempt) {
     int obfuscated_id = dist(rng);
-    
+
     char buf[10] = {0};
     snprintf(buf, sizeof(buf), "%09d", obfuscated_id);
     std::string device_id(buf);
@@ -151,7 +152,8 @@ std::string DeviceDBManager::GenerateDeviceId() {
     }
   }
 
-  LOG_ERROR("Failed to generate unique device ID after {} attempts.", MAX_RETRIES);
+  LOG_ERROR("Failed to generate unique device ID after {} attempts.",
+            MAX_RETRIES);
   return {};
 }
 
@@ -204,15 +206,16 @@ DeviceCredential DeviceDBManager::AddDevice(const std::string& device_id,
       if (stored_hash != hash) {
         // Update password
         const char* update_sql =
-            "UPDATE devices SET password_hash = ? WHERE device_id = ?;";
+            "UPDATE devices SET password_hash = ?, password_salt = ? WHERE "
+            "device_id = ?;";
         if (sqlite3_prepare_v2(db_, update_sql, -1, &stmt, nullptr) !=
             SQLITE_OK) {
           LOG_ERROR("Failed to prepare update statement.");
           return {};
         }
         sqlite3_bind_text(stmt, 1, hash.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(stmt, 2, device_id.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(stmt, 3, salt.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 2, salt.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 3, device_id.c_str(), -1, SQLITE_TRANSIENT);
         rc = sqlite3_step(stmt);
         sqlite3_finalize(stmt);
         if (rc != SQLITE_DONE) {
@@ -297,7 +300,10 @@ DeviceCredential DeviceDBManager::AddDevice(const std::string& device_id,
       return {new_id, new_pwd, false};
     } else if (rc == SQLITE_CONSTRAINT) {
       sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
-      LOG_WARN("Insert failed due to constraint (ID may have been inserted concurrently): {}", new_id);
+      LOG_WARN(
+          "Insert failed due to constraint (ID may have been inserted "
+          "concurrently): {}",
+          new_id);
       continue;
     } else {
       sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
@@ -306,12 +312,18 @@ DeviceCredential DeviceDBManager::AddDevice(const std::string& device_id,
     }
   }
 
-  LOG_ERROR("Failed to generate unique device_id after {} attempts.", MAX_RETRIES);
+  LOG_ERROR("Failed to generate unique device_id after {} attempts.",
+            MAX_RETRIES);
   return {};
 }
 
 int DeviceDBManager::VerifyDevice(const std::string& device_id,
                                   const std::string& password) {
+  if (db_ == nullptr) {
+    LOG_ERROR("Database is not initialized in VerifyDevice.");
+    return -1;
+  }
+
   const char* sql =
       "SELECT password_salt, password_hash FROM devices WHERE device_id = ?;";
 
@@ -346,6 +358,11 @@ int DeviceDBManager::VerifyDevice(const std::string& device_id,
 
 bool DeviceDBManager::UpdatePassword(const std::string& device_id,
                                      const std::string& new_password) {
+  if (db_ == nullptr) {
+    LOG_ERROR("Database is not initialized in UpdatePassword.");
+    return false;
+  }
+
   std::string salt = GenerateSalt();
   std::string hash = HashPasswordWithSalt(salt, new_password);
 
@@ -368,6 +385,11 @@ bool DeviceDBManager::UpdatePassword(const std::string& device_id,
 }
 
 bool DeviceDBManager::RemoveDevice(const std::string& device_id) {
+  if (db_ == nullptr) {
+    LOG_ERROR("Database is not initialized in RemoveDevice.");
+    return false;
+  }
+
   const char* sql = "DELETE FROM devices WHERE device_id = ?;";
 
   sqlite3_stmt* stmt = nullptr;
