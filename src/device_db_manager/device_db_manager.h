@@ -10,6 +10,7 @@
 #include <sqlite3.h>
 
 #include <string>
+#include <vector>
 
 struct DeviceCredential {
   std::string device_id;
@@ -33,6 +34,13 @@ class DeviceDBManager {
 
   int VerifyDevice(const std::string& device_id, const std::string& password);
   bool RemoveDevice(const std::string& device_id);
+
+  bool SetDeviceOnline(const std::string& device_id, bool online);
+  std::vector<std::pair<std::string, bool>> BatchQueryOnline(
+      const std::vector<std::string>& device_ids);
+  bool SetUserDevices(const std::string& user_id,
+                      const std::vector<std::string>& device_ids);
+  std::vector<std::string> GetUserDevices(const std::string& user_id);
 
  private:
   void InitDB();

@@ -17,7 +17,7 @@ using nlohmann::json;
 class SignalNegotiation {
  public:
   SignalNegotiation(std::shared_ptr<TransmissionManager> transmission_manager,
-                    std::string db_path);
+                    DeviceDBManager* device_db);
   ~SignalNegotiation();
 
   void SetSendMsgCallback(
@@ -37,7 +37,7 @@ class SignalNegotiation {
 
  private:
   std::shared_ptr<TransmissionManager> transmission_manager_;
-  std::unique_ptr<DeviceDBManager> device_db_manager_;
+  DeviceDBManager* device_db_manager_;
   std::function<void(websocketpp::connection_hdl, json)> send_msg_;
 };
 

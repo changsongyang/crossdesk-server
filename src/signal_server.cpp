@@ -31,11 +31,21 @@ SignalServer::SignalServer() {
                                      std::placeholders::_2));
 
   transmission_manager_ = std::make_shared<TransmissionManager>();
-  signal_negotiation_ =
-      std::make_unique<SignalNegotiation>(transmission_manager_, db_path_);
+  device_db_manager_ = std::make_unique<DeviceDBManager>(db_path_);
+  signal_negotiation_ = std::make_unique<SignalNegotiation>(
+      transmission_manager_, device_db_manager_.get());
   signal_negotiation_->SetSendMsgCallback(std::bind(&SignalServer::SendMsg,
                                                     this, std::placeholders::_1,
                                                     std::placeholders::_2));
+  presence_manager_ = std::make_unique<PresenceManager>();
+  presence_manager_->SetSendMsgCallback(std::bind(&SignalServer::SendMsg, this,
+                                                  std::placeholders::_1,
+                                                  std::placeholders::_2));
+  presence_manager_->SetDeviceDB(device_db_manager_.get());
+  presence_manager_->SetSendToDeviceCallback(
+      [this](const std::string& id, json msg) {
+        SendMsg(transmission_manager_->GetWsHandle(id), msg);
+      });
 }
 
 SignalServer::SignalServer(uint16_t port, std::string certs_dir,
@@ -69,11 +79,21 @@ SignalServer::SignalServer(uint16_t port, std::string certs_dir,
                                      std::placeholders::_2));
 
   transmission_manager_ = std::make_shared<TransmissionManager>();
-  signal_negotiation_ =
-      std::make_unique<SignalNegotiation>(transmission_manager_, db_path_);
+  device_db_manager_ = std::make_unique<DeviceDBManager>(db_path_);
+  signal_negotiation_ = std::make_unique<SignalNegotiation>(
+      transmission_manager_, device_db_manager_.get());
   signal_negotiation_->SetSendMsgCallback(std::bind(&SignalServer::SendMsg,
                                                     this, std::placeholders::_1,
                                                     std::placeholders::_2));
+  presence_manager_ = std::make_unique<PresenceManager>();
+  presence_manager_->SetSendMsgCallback(std::bind(&SignalServer::SendMsg, this,
+                                                  std::placeholders::_1,
+                                                  std::placeholders::_2));
+  presence_manager_->SetDeviceDB(device_db_manager_.get());
+  presence_manager_->SetSendToDeviceCallback(
+      [this](const std::string& id, json msg) {
+        SendMsg(transmission_manager_->GetWsHandle(id), msg);
+      });
 }
 
 SignalServer::~SignalServer() {}
@@ -95,6 +115,9 @@ bool SignalServer::OnClose(websocketpp::connection_hdl hdl) {
       signal_negotiation_->OnWebClientDisconnect(user_id);
     }
   }
+  if (presence_manager_ && !user_id.empty()) {
+    presence_manager_->OnLogout(user_id);
+  }
   ws_connections_.erase(hdl);
   return true;
 }
@@ -110,6 +133,9 @@ bool SignalServer::OnFail(websocketpp::connection_hdl hdl) {
     if (signal_negotiation_) {
       signal_negotiation_->OnWebClientDisconnect(user_id);
     }
+  }
+  if (presence_manager_ && !user_id.empty()) {
+    presence_manager_->OnLogout(user_id);
   }
   ws_connections_.erase(hdl);
   return true;
@@ -271,6 +297,12 @@ void SignalServer::OnMessage(websocketpp::connection_hdl hdl,
       }
       case "login"_H:
         signal_negotiation_->login_user(hdl, j);
+        if (presence_manager_) {
+          std::string id = transmission_manager_->GetUserId(hdl);
+          if (!id.empty()) {
+            presence_manager_->OnLogin(id, id, hdl);
+          }
+        }
         break;
       case "user_leave_transmission"_H:
         signal_negotiation_->leave_transmission(hdl, j);
@@ -293,6 +325,30 @@ void SignalServer::OnMessage(websocketpp::connection_hdl hdl,
       case "new_candidate_mid"_H:
         signal_negotiation_->new_candidate_mid(hdl, j);
         break;
+      case "recent_connections_presence"_H: {
+        std::string user_id;
+        if (!j.contains("user_id") || !j["user_id"].is_string()) {
+          LOG_ERROR("recent_connections missing field: user_id");
+          break;
+        }
+        user_id = j["user_id"].get<std::string>();
+        std::vector<std::string> device_ids;
+        if (j.contains("devices") && j["devices"].is_array()) {
+          for (auto& v : j["devices"]) {
+            if (v.is_string()) device_ids.push_back(v.get<std::string>());
+          }
+        }
+        if (presence_manager_) {
+          presence_manager_->UpdateUserDevices(user_id, device_ids);
+          auto statuses = presence_manager_->BatchQuery(device_ids);
+          json resp = {{"type", "presence"}, {"devices", json::array()}};
+          for (const auto& p : statuses) {
+            resp["devices"].push_back({{"id", p.first}, {"online", p.second}});
+          }
+          server_.send(hdl, resp.dump(), websocketpp::frame::opcode::text);
+        }
+        break;
+      }
       default:
         LOG_WARN("Unknown message type: {}", type);
         break;

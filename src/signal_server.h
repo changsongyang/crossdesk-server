@@ -14,6 +14,8 @@
 #include <websocketpp/config/asio.hpp>
 #include <websocketpp/server.hpp>
 
+#include "device_db_manager.h"
+#include "presence_manager.h"
 #include "signal_negotiation.h"
 
 using nlohmann::json;
@@ -51,7 +53,9 @@ class SignalServer {
   unsigned int ws_connection_id_ = 0;
 
   std::shared_ptr<TransmissionManager> transmission_manager_;
+  std::unique_ptr<DeviceDBManager> device_db_manager_;
   std::unique_ptr<SignalNegotiation> signal_negotiation_;
+  std::unique_ptr<PresenceManager> presence_manager_;
 };
 
 #endif

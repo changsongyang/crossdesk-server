@@ -52,9 +52,14 @@ target("negotiation")
     add_files("src/signal_negotiation.cpp")
     add_includedirs("src", {public = true})
 
-target("server")
+target("presence")
     set_kind("object")
     add_deps("log", "common", "negotiation")
+    add_files("src/presence_manager.cpp")
+
+target("server")
+    set_kind("object")
+    add_deps("log", "common", "negotiation", "presence")
     add_files("src/signal_server.cpp")
 
 target("crossdesk_server")

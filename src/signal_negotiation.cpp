@@ -16,10 +16,9 @@ bool GetStringField(const json& j, const char* key, std::string& value) {
 
 SignalNegotiation::SignalNegotiation(
     std::shared_ptr<TransmissionManager> transmission_manager,
-    std::string db_path)
-    : transmission_manager_(transmission_manager) {
-  device_db_manager_ = std::make_unique<DeviceDBManager>(db_path);
-}
+    DeviceDBManager* device_db)
+    : transmission_manager_(transmission_manager),
+      device_db_manager_(device_db) {}
 
 SignalNegotiation::~SignalNegotiation() {}
 
