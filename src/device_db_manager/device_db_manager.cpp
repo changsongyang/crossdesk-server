@@ -60,12 +60,6 @@ void DeviceDBManager::InitDB() {
       "online INTEGER NOT NULL,"
       "updated_at INTEGER NOT NULL"
       ");";
-  const char* sql_user_devices =
-      "CREATE TABLE IF NOT EXISTS user_devices ("
-      "user_id TEXT NOT NULL,"
-      "device_id TEXT NOT NULL,"
-      "PRIMARY KEY(user_id, device_id)"
-      ");";
 
   char* err_msg = nullptr;
 
@@ -91,12 +85,6 @@ void DeviceDBManager::InitDB() {
   if (sqlite3_exec(db_, sql_presence, nullptr, nullptr, &err_msg) !=
       SQLITE_OK) {
     LOG_ERROR("Failed to create device_presence table: {}", err_msg);
-    sqlite3_free(err_msg);
-    return;
-  }
-  if (sqlite3_exec(db_, sql_user_devices, nullptr, nullptr, &err_msg) !=
-      SQLITE_OK) {
-    LOG_ERROR("Failed to create user_devices table: {}", err_msg);
     sqlite3_free(err_msg);
     return;
   }
@@ -410,70 +398,6 @@ bool DeviceDBManager::UpdatePassword(const std::string& device_id,
   return success;
 }
 
-bool DeviceDBManager::SetUserDevices(
-    const std::string& user_id, const std::vector<std::string>& device_ids) {
-  if (db_ == nullptr) {
-    LOG_ERROR("Database is not initialized in SetUserDevices.");
-    return false;
-  }
-  sqlite3_exec(db_, "BEGIN TRANSACTION;", nullptr, nullptr, nullptr);
-  const char* del_sql = "DELETE FROM user_devices WHERE user_id = ?;";
-  sqlite3_stmt* del_stmt = nullptr;
-  if (sqlite3_prepare_v2(db_, del_sql, -1, &del_stmt, nullptr) != SQLITE_OK) {
-    sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
-    return false;
-  }
-  sqlite3_bind_text(del_stmt, 1, user_id.c_str(), -1, SQLITE_TRANSIENT);
-  if (sqlite3_step(del_stmt) != SQLITE_DONE) {
-    sqlite3_finalize(del_stmt);
-    sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
-    return false;
-  }
-  sqlite3_finalize(del_stmt);
-
-  const char* ins_sql =
-      "INSERT INTO user_devices (user_id, device_id) VALUES (?, ?);";
-  sqlite3_stmt* ins_stmt = nullptr;
-  if (sqlite3_prepare_v2(db_, ins_sql, -1, &ins_stmt, nullptr) != SQLITE_OK) {
-    sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
-    return false;
-  }
-  for (const auto& id : device_ids) {
-    sqlite3_bind_text(ins_stmt, 1, user_id.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(ins_stmt, 2, id.c_str(), -1, SQLITE_TRANSIENT);
-    if (sqlite3_step(ins_stmt) != SQLITE_DONE) {
-      sqlite3_finalize(ins_stmt);
-      sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
-      return false;
-    }
-    sqlite3_reset(ins_stmt);
-    sqlite3_clear_bindings(ins_stmt);
-  }
-  sqlite3_finalize(ins_stmt);
-  sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, nullptr);
-  return true;
-}
-
-std::vector<std::string> DeviceDBManager::GetUserDevices(
-    const std::string& user_id) {
-  std::vector<std::string> devices;
-  if (db_ == nullptr) {
-    LOG_ERROR("Database is not initialized in GetUserDevices.");
-    return devices;
-  }
-  const char* sql = "SELECT device_id FROM user_devices WHERE user_id = ?;";
-  sqlite3_stmt* stmt = nullptr;
-  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-    return devices;
-  }
-  sqlite3_bind_text(stmt, 1, user_id.c_str(), -1, SQLITE_TRANSIENT);
-  while (sqlite3_step(stmt) == SQLITE_ROW) {
-    devices.emplace_back(
-        reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0)));
-  }
-  sqlite3_finalize(stmt);
-  return devices;
-}
 bool DeviceDBManager::RemoveDevice(const std::string& device_id) {
   if (db_ == nullptr) {
     LOG_ERROR("Database is not initialized in RemoveDevice.");

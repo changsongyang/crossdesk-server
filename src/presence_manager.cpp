@@ -2,6 +2,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "log.h"
+
 void PresenceManager::OnLogin(const std::string& user_id,
                               const std::string& device_id,
                               websocketpp::connection_hdl hdl) {
@@ -12,8 +14,7 @@ void PresenceManager::OnLogin(const std::string& user_id,
 }
 
 void PresenceManager::OnLogout(const std::string& device_id) {
-  std::string user_id;
-  user_id = device_id;
+  std::string user_id = device_id;
   if (db_) {
     db_->SetDeviceOnline(device_id, false);
   }
@@ -40,15 +41,30 @@ std::vector<std::pair<std::string, bool>> PresenceManager::BatchQuery(
 void PresenceManager::NotifyUserDevices(const std::string& user_id,
                                         const std::string& changed_device_id,
                                         bool online) {
-  if (!db_ || !send_msg_) return;
-  auto devices = db_->GetUserDevices(user_id);
-  if (devices.empty()) return;
-  auto statuses = db_->BatchQueryOnline(devices);
-  std::vector<std::string> targets;
-  for (const auto& p : statuses) {
-    if (p.first == changed_device_id) continue;
-    if (p.second) {
-      targets.push_back(p.first);
+  if (!send_msg_) {
+    return;
+  }
+
+  std::vector<std::string> watchers;
+  for (const auto& kv : associations_) {
+    const auto& watcher = kv.first;
+    const auto& watched_set = kv.second;
+    if (watched_set.find(changed_device_id) != watched_set.end()) {
+      watchers.push_back(watcher);
+    }
+  }
+  if (watchers.empty()) {
+    return;
+  }
+  std::vector<std::string> targets = watchers;
+  if (db_) {
+    auto statuses = db_->BatchQueryOnline(watchers);
+    targets.clear();
+    for (const auto& p : statuses) {
+      if (p.first == changed_device_id) {
+        continue;
+      }
+      if (p.second) targets.push_back(p.first);
     }
   }
   nlohmann::json j = {
@@ -56,7 +72,7 @@ void PresenceManager::NotifyUserDevices(const std::string& user_id,
       {"id", changed_device_id},
       {"online", online},
   };
-  for (auto& id : targets) {
+  for (const auto& id : targets) {
     if (send_to_device_) {
       send_to_device_(id, j);
     }
@@ -65,6 +81,9 @@ void PresenceManager::NotifyUserDevices(const std::string& user_id,
 
 void PresenceManager::UpdateUserDevices(
     const std::string& user_id, const std::vector<std::string>& device_ids) {
-  if (!db_) return;
-  db_->SetUserDevices(user_id, device_ids);
+  auto& setref = associations_[user_id];
+  setref.clear();
+  for (const auto& id : device_ids) {
+    setref.insert(id);
+  }
 }

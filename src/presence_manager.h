@@ -10,6 +10,8 @@
 #include <functional>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <websocketpp/server.hpp>
 
@@ -50,6 +52,8 @@ class PresenceManager {
   std::function<void(websocketpp::connection_hdl, json)> send_msg_;
   DeviceDBManager* db_ = nullptr;
   std::function<void(const std::string&, json)> send_to_device_;
+  std::unordered_map<std::string, std::unordered_set<std::string>>
+      associations_;
 };
 
 #endif
