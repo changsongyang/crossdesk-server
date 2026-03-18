@@ -1,45 +1,3 @@
-FROM ubuntu:22.04 AS builder
-
-# Set non-interactive mode
-ENV DEBIAN_FRONTEND=noninteractive
-
-# Install build dependencies
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        ca-certificates \
-        gnupg \
-        software-properties-common \
-        git \
-        curl \
-        unzip \
-        build-essential
-
-# Add xmake repository and install xmake
-RUN add-apt-repository -y ppa:xmake-io/xmake && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends xmake && \
-    xmake --version --root
-
-# Clean up to reduce image size
-RUN apt-get clean && \
-    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
-
-WORKDIR /src
-COPY . .
-
-# Build and copy only the binary, clean up build artifacts
-RUN xmake b -vy --root crossdesk_server && \
-    mkdir -p /output && \
-    BINARY_PATH="$(find build -type f -path '*/release/crossdesk_server' | head -n 1)" && \
-    test -n "${BINARY_PATH}" && \
-    cp "${BINARY_PATH}" /output/crossdesk_server && \
-    rm -rf build .xmake
-
-FROM scratch AS artifact
-
-COPY --from=builder /output/crossdesk_server /crossdesk_server
-
-
 FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -49,7 +7,7 @@ RUN apt-get update && \
         coturn \
         openssl && \
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+    rm -rf /var/lib/apt/lists/*
 
 # Generate coturn certificates and set permissions in one layer
 RUN mkdir -p /opt/turnserver && \
@@ -62,10 +20,9 @@ RUN mkdir -p /opt/turnserver && \
       -out turn_server_cert.pem && \
     chmod 600 /opt/turnserver/turn_server_pkey.pem
 
-# Copy files and set permissions in one layer
-COPY docker/start.sh /start.sh
-COPY docker/generate_certs.sh /docker/generate_certs.sh
-COPY --from=artifact /crossdesk_server /crossdesk-server/crossdesk_server
-RUN chmod +x /start.sh /docker/generate_certs.sh /crossdesk-server/crossdesk_server
+# Copy runtime files and prebuilt binary from CI workspace
+COPY --chmod=755 docker/start.sh /start.sh
+COPY --chmod=755 docker/generate_certs.sh /docker/generate_certs.sh
+COPY --chmod=755 dist/crossdesk_server /crossdesk-server/crossdesk_server
 
 ENTRYPOINT ["/start.sh"]

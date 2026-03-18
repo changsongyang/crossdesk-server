@@ -14,58 +14,96 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-22.04
+            artifact_name: crossdesk_server-linux-amd64
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+            artifact_name: crossdesk_server-linux-arm64
+
+    container:
+      image: ubuntu:22.04
+      options: --user root
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates \
+            gnupg \
+            software-properties-common \
+            git \
+            curl \
+            unzip \
+            build-essential
+
+      - name: Install xmake
+        shell: bash
+        run: |
+          add-apt-repository -y ppa:xmake-io/xmake
+          apt-get update
+          apt-get install -y --no-install-recommends xmake
+
+      - name: Build ${{ matrix.arch }} binary
+        env:
+            XMAKE_GLOBALDIR: /data
+            XMAKE_ROOT: y
+        shell: bash
+        run: |
+          xmake f -m release --root -y
+          xmake b --root -vy crossdesk_server
+          BINARY_PATH="$(find build -type f -path '*/release/crossdesk_server' | head -n 1)"
+          test -n "${BINARY_PATH}"
+          mkdir -p dist
+          cp "${BINARY_PATH}" "./dist/${{ matrix.artifact_name }}"
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ./dist/${{ matrix.artifact_name }}
+          compression-level: 0
+
+  docker-release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - arch: amd64
             platform: linux/amd64
+            runner: ubuntu-22.04
             artifact_name: crossdesk_server-linux-amd64
           - arch: arm64
             platform: linux/arm64
+            runner: ubuntu-22.04-arm
             artifact_name: crossdesk_server-linux-arm64
 
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Build ${{ matrix.arch }} binary artifact
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/dockerfile
-          platforms: ${{ matrix.platform }}
-          target: artifact
-          outputs: type=local,dest=./dist
-
-      - name: Rename built binary
-        run: |
-          mv ./dist/crossdesk_server ./dist/${{ matrix.artifact_name }}
-        shell: bash
-
-      - uses: actions/upload-artifact@v6
+      - name: Download ${{ matrix.arch }} binary artifact
+        uses: actions/download-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: ./dist/${{ matrix.artifact_name }}
+          path: dist
 
-  docker-release:
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: build
-    runs-on: ubuntu-22.04
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
+      - name: Prepare runtime binary path
+        shell: bash
+        run: |
+          mv "./dist/${{ matrix.artifact_name }}" ./dist/crossdesk_server
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -81,15 +119,47 @@ jobs:
         with:
           context: .
           file: docker/dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.platform }}
           push: true
           tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/crossdesk-server:${{ github.ref_name }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/crossdesk-server:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/crossdesk-server:${{ github.ref_name }}-${{ matrix.arch }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/crossdesk-server:latest-${{ matrix.arch }}
+          cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/crossdesk-server:buildcache-${{ matrix.arch }}
+          cache-to: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/crossdesk-server:buildcache-${{ matrix.arch }},mode=max
+
+  docker-manifest:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: docker-release
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Create multi-arch manifests
+        shell: bash
+        run: |
+          IMAGE_NAME=${{ secrets.DOCKERHUB_USERNAME }}/crossdesk-server
+
+          docker buildx imagetools create \
+            -t ${IMAGE_NAME}:${GITHUB_REF_NAME} \
+            ${IMAGE_NAME}:${GITHUB_REF_NAME}-amd64 \
+            ${IMAGE_NAME}:${GITHUB_REF_NAME}-arm64
+
+          docker buildx imagetools create \
+            -t ${IMAGE_NAME}:latest \
+            ${IMAGE_NAME}:latest-amd64 \
+            ${IMAGE_NAME}:latest-arm64
 
   release:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: build
+    needs: [build, docker-manifest]
     runs-on: ubuntu-22.04
 
     steps:
