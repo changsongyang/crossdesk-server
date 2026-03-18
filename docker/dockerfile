@@ -30,11 +30,26 @@ COPY . .
 # Build and copy only the binary, clean up build artifacts
 RUN xmake b -vy --root crossdesk_server && \
     mkdir -p /output && \
-    cp build/linux/x86_64/release/crossdesk_server /output/ && \
+    BINARY_PATH="$(find build -type f -path '*/release/crossdesk_server' | head -n 1)" && \
+    test -n "${BINARY_PATH}" && \
+    cp "${BINARY_PATH}" /output/crossdesk_server && \
     rm -rf build .xmake
 
+FROM scratch AS artifact
 
-FROM crossdesk/crossdesk-server-base:latest
+COPY --from=builder /output/crossdesk_server /crossdesk_server
+
+
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        coturn \
+        openssl && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 # Generate coturn certificates and set permissions in one layer
 RUN mkdir -p /opt/turnserver && \
@@ -50,7 +65,7 @@ RUN mkdir -p /opt/turnserver && \
 # Copy files and set permissions in one layer
 COPY docker/start.sh /start.sh
 COPY docker/generate_certs.sh /docker/generate_certs.sh
-COPY --from=builder /output/crossdesk_server /crossdesk-server/crossdesk_server
+COPY --from=artifact /crossdesk_server /crossdesk-server/crossdesk_server
 RUN chmod +x /start.sh /docker/generate_certs.sh /crossdesk-server/crossdesk_server
 
 ENTRYPOINT ["/start.sh"]
