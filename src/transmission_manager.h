@@ -8,6 +8,7 @@
 #define _TRANSMISSION_MANAGER_H_
 
 #include <atomic>
+#include <condition_variable>
 #include <map>
 #include <mutex>
 #include <thread>
@@ -63,6 +64,7 @@ class TransmissionManager {
 
   std::thread ws_hdl_alive_checker_;
   std::recursive_mutex ws_hdl_alive_checker_mutex_;
+  std::condition_variable_any ws_hdl_alive_checker_cv_;
   std::atomic<bool> exit_alive_checker_{false};
   std::atomic<size_t> active_connection_count_{0};
 };

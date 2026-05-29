@@ -2,8 +2,35 @@
 
 #include <algorithm>
 #include <chrono>
+#include <memory>
 
 #include "log.h"
+
+namespace {
+
+bool HasConnectionOwner(websocketpp::connection_hdl hdl) {
+  static const websocketpp::connection_hdl empty_hdl;
+  std::owner_less<websocketpp::connection_hdl> less;
+  return less(hdl, empty_hdl) || less(empty_hdl, hdl);
+}
+
+bool SameConnection(websocketpp::connection_hdl lhs,
+                    websocketpp::connection_hdl rhs) {
+  if (!HasConnectionOwner(lhs) || !HasConnectionOwner(rhs)) {
+    return false;
+  }
+
+  std::owner_less<websocketpp::connection_hdl> less;
+  return !less(lhs, rhs) && !less(rhs, lhs);
+}
+
+void SubtractActiveConnectionCount(std::atomic<size_t>& count,
+                                   size_t amount) {
+  size_t current = count.load();
+  count.store(amount > current ? 0 : current - amount);
+}
+
+}  // namespace
 
 TransmissionManager::TransmissionManager() {
   ws_hdl_alive_checker_ = std::thread(&TransmissionManager::AliveChecker, this);
@@ -11,6 +38,7 @@ TransmissionManager::TransmissionManager() {
 
 TransmissionManager::~TransmissionManager() {
   exit_alive_checker_ = true;
+  ws_hdl_alive_checker_cv_.notify_all();
   if (ws_hdl_alive_checker_.joinable()) {
     ws_hdl_alive_checker_.join();
   }
@@ -27,7 +55,8 @@ bool TransmissionManager::ReleaseTransmission(
   std::lock_guard<std::recursive_mutex> lock(ws_hdl_alive_checker_mutex_);
   auto guest_it = transmission_guest_id_list_.find(transmission_id);
   if (guest_it != transmission_guest_id_list_.end()) {
-    active_connection_count_ -= guest_it->second.size();
+    SubtractActiveConnectionCount(active_connection_count_,
+                                  guest_it->second.size());
     transmission_guest_id_list_.erase(guest_it);
   }
   transmission_host_id_list_.erase(transmission_id);
@@ -55,31 +84,36 @@ std::string TransmissionManager::IsGuest(const std::string& user_id) {
 bool TransmissionManager::IsHostOfTransmission(
     const std::string& user_id, const std::string& transmission_id) {
   std::lock_guard<std::recursive_mutex> lock(ws_hdl_alive_checker_mutex_);
-  if (transmission_host_id_list_.count(transmission_id)) {
-    return transmission_host_id_list_[transmission_id] == user_id;
-  } else {
+  auto host_it = transmission_host_id_list_.find(transmission_id);
+  if (host_it == transmission_host_id_list_.end()) {
     LOG_WARN("Transmission [{}] does not exist", transmission_id);
     return false;
   }
+  return host_it->second == user_id;
 }
 
 std::vector<std::string> TransmissionManager::GetAllUserIdOfTransmission(
     const std::string& transmission_id) {
   std::lock_guard<std::recursive_mutex> lock(ws_hdl_alive_checker_mutex_);
   std::vector<std::string> result;
-  if (transmission_host_id_list_.count(transmission_id)) {
-    result.push_back(transmission_host_id_list_[transmission_id]);
+  auto host_it = transmission_host_id_list_.find(transmission_id);
+  if (host_it != transmission_host_id_list_.end()) {
+    result.push_back(host_it->second);
   }
-  auto& guests = transmission_guest_id_list_[transmission_id];
-  result.insert(result.end(), guests.begin(), guests.end());
+  auto guest_it = transmission_guest_id_list_.find(transmission_id);
+  if (guest_it != transmission_guest_id_list_.end()) {
+    result.insert(result.end(), guest_it->second.begin(),
+                  guest_it->second.end());
+  }
   return result;
 }
 
 std::string TransmissionManager::GetHostIdOfTransmission(
     const std::string& transmission_id) {
   std::lock_guard<std::recursive_mutex> lock(ws_hdl_alive_checker_mutex_);
-  if (transmission_host_id_list_.count(transmission_id)) {
-    return transmission_host_id_list_[transmission_id];
+  auto host_it = transmission_host_id_list_.find(transmission_id);
+  if (host_it != transmission_host_id_list_.end()) {
+    return host_it->second;
   }
 
   return "";
@@ -126,7 +160,7 @@ bool TransmissionManager::ReleaseGuestFromTransmission(
     auto it = std::find(list.begin(), list.end(), guest_id);
     if (it != list.end()) {
       list.erase(it);
-      --active_connection_count_;
+      SubtractActiveConnectionCount(active_connection_count_, 1);
       if (list.empty()) {
         transmission_guest_id_list_.erase(map_it);
       }
@@ -163,7 +197,7 @@ std::string TransmissionManager::ReleaseUserFromWsHandle(
   std::lock_guard<std::recursive_mutex> lock(ws_hdl_alive_checker_mutex_);
   for (auto it = user_id_ws_hdl_list_.begin(); it != user_id_ws_hdl_list_.end();
        ++it) {
-    if (it->second.lock().get() == hdl.lock().get()) {
+    if (SameConnection(it->second, hdl)) {
       std::string user_id = it->first;
       user_id_ws_hdl_list_.erase(it);
       return user_id;
@@ -192,7 +226,7 @@ websocketpp::connection_hdl TransmissionManager::GetWsHandle(
 std::string TransmissionManager::GetUserId(websocketpp::connection_hdl hdl) {
   std::lock_guard<std::recursive_mutex> lock(ws_hdl_alive_checker_mutex_);
   for (const auto& pair : user_id_ws_hdl_list_) {
-    if (pair.second.lock().get() == hdl.lock().get()) return pair.first;
+    if (SameConnection(pair.second, hdl)) return pair.first;
   }
   return "";
 }
@@ -213,8 +247,13 @@ size_t TransmissionManager::GetActiveConnectionCount() {
 
 void TransmissionManager::AliveChecker() {
   while (!exit_alive_checker_) {
-    std::this_thread::sleep_for(std::chrono::seconds(10));
-    std::lock_guard<std::recursive_mutex> lock(ws_hdl_alive_checker_mutex_);
+    std::unique_lock<std::recursive_mutex> lock(ws_hdl_alive_checker_mutex_);
+    if (ws_hdl_alive_checker_cv_.wait_for(
+            lock, std::chrono::seconds(10),
+            [this]() { return exit_alive_checker_.load(); })) {
+      break;
+    }
+
     uint32_t now = static_cast<uint32_t>(
         std::chrono::system_clock::now().time_since_epoch() /
         std::chrono::seconds(1));
