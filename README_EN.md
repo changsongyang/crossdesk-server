@@ -146,7 +146,7 @@ The `/api/stats` path is also supported. Example response:
 }
 ```
 
-- `online_device_count`: Number of online devices, excluding temporary `web-*` clients
+- `online_device_count`: Number of online devices, excluding temporary `web-*` clients and `C-*` clone clients
 - `online_web_client_count`: Number of online web clients, counting only temporary `web-*` clients
 - `active_connection_count`: Number of active in-progress connections, counted by joined guest connections in transmissions
 - The response includes `Access-Control-Allow-Origin: *`, so it can be called directly from browser `fetch`

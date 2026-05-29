@@ -10,8 +10,12 @@ bool IsWebClient(const std::string& device_id) {
   return device_id.rfind("web-", 0) == 0;
 }
 
+bool IsCloneClient(const std::string& device_id) {
+  return device_id.rfind("C-", 0) == 0;
+}
+
 bool ShouldTrackOnlineDevice(const std::string& device_id) {
-  return !IsWebClient(device_id);
+  return !IsWebClient(device_id) && !IsCloneClient(device_id);
 }
 
 }  // namespace
@@ -23,7 +27,7 @@ void PresenceManager::OnLogin(const std::string& user_id,
     std::lock_guard<std::mutex> lock(online_devices_mutex_);
     if (ShouldTrackOnlineDevice(device_id)) {
       online_devices_.insert(device_id);
-    } else {
+    } else if (IsWebClient(device_id)) {
       online_web_clients_.insert(device_id);
     }
   }
@@ -39,7 +43,7 @@ void PresenceManager::OnLogout(const std::string& device_id) {
     std::lock_guard<std::mutex> lock(online_devices_mutex_);
     if (ShouldTrackOnlineDevice(device_id)) {
       online_devices_.erase(device_id);
-    } else {
+    } else if (IsWebClient(device_id)) {
       online_web_clients_.erase(device_id);
     }
   }

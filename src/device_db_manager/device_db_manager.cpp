@@ -502,7 +502,9 @@ int DeviceDBManager::GetOnlineDeviceCount() {
 
   const char* sql =
       "SELECT COUNT(*) FROM device_presence "
-      "WHERE online = 1 AND device_id NOT LIKE 'web-%';";
+      "WHERE online = 1 "
+      "AND device_id NOT LIKE 'web-%' "
+      "AND device_id NOT LIKE 'C-%';";
 
   sqlite3_stmt* stmt = nullptr;
   if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
