@@ -36,6 +36,7 @@ class DeviceDBManager {
   bool RemoveDevice(const std::string& device_id);
 
   bool SetDeviceOnline(const std::string& device_id, bool online);
+  int GetOnlineDeviceCount();
   std::vector<std::pair<std::string, bool>> BatchQueryOnline(
       const std::vector<std::string>& device_ids);
   bool SetUserDevices(const std::string& user_id,

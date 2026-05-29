@@ -8,6 +8,7 @@
 #define _PRESENCE_MANAGER_H_
 
 #include <functional>
+#include <mutex>
 #include <nlohmann/json.hpp>
 #include <string>
 #include <unordered_map>
@@ -41,6 +42,7 @@ class PresenceManager {
                websocketpp::connection_hdl hdl);
   void OnLogout(const std::string& device_id);
   bool IsOnline(const std::string& device_id) const;
+  size_t GetOnlineDeviceCount() const;
   std::vector<std::pair<std::string, bool>> BatchQuery(
       const std::vector<std::string>& device_ids) const;
   void NotifyUserDevices(const std::string& user_id,
@@ -54,6 +56,8 @@ class PresenceManager {
   std::function<void(const std::string&, json)> send_to_device_;
   std::unordered_map<std::string, std::unordered_set<std::string>>
       associations_;
+  mutable std::mutex online_devices_mutex_;
+  std::unordered_set<std::string> online_devices_;
 };
 
 #endif

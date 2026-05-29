@@ -441,6 +441,29 @@ bool DeviceDBManager::SetDeviceOnline(const std::string& device_id,
   return ok;
 }
 
+int DeviceDBManager::GetOnlineDeviceCount() {
+  if (db_ == nullptr) {
+    LOG_ERROR("Database is not initialized in GetOnlineDeviceCount.");
+    return 0;
+  }
+
+  const char* sql =
+      "SELECT COUNT(*) FROM device_presence "
+      "WHERE online = 1 AND device_id NOT LIKE 'web-%';";
+
+  sqlite3_stmt* stmt = nullptr;
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    return 0;
+  }
+
+  int count = 0;
+  if (sqlite3_step(stmt) == SQLITE_ROW) {
+    count = sqlite3_column_int(stmt, 0);
+  }
+  sqlite3_finalize(stmt);
+  return count;
+}
+
 std::vector<std::pair<std::string, bool>> DeviceDBManager::BatchQueryOnline(
     const std::vector<std::string>& device_ids) {
   std::vector<std::pair<std::string, bool>> result;

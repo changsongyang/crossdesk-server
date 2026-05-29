@@ -40,12 +40,15 @@ class TransmissionManager {
                           websocketpp::connection_hdl hdl);
 
   bool ReleaseGuestFromTransmission(const std::string& guest_id);
+  std::string ReleaseUserSession(websocketpp::connection_hdl hdl);
   std::string ReleaseUserFromWsHandle(websocketpp::connection_hdl hdl);
+  void RemoveWsHandleLastActiveTime(websocketpp::connection_hdl hdl);
 
   websocketpp::connection_hdl GetWsHandle(const std::string& user_id);
   std::string GetUserId(websocketpp::connection_hdl hdl);
 
   int UpdateWsHandleLastActiveTime(websocketpp::connection_hdl hdl);
+  size_t GetActiveConnectionCount();
 
  private:
   void AliveChecker();
@@ -61,6 +64,7 @@ class TransmissionManager {
   std::thread ws_hdl_alive_checker_;
   std::recursive_mutex ws_hdl_alive_checker_mutex_;
   std::atomic<bool> exit_alive_checker_{false};
+  std::atomic<size_t> active_connection_count_{0};
 };
 
 #endif

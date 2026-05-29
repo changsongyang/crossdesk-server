@@ -114,6 +114,43 @@ sudo mkdir -p /var/lib/crossdesk /var/log/crossdesk
 sudo chown -R $(id -u):$(id -g) /var/lib/crossdesk /var/log/crossdesk
 ```
 
+## Service Stats Endpoint
+
+After the service starts, you can query runtime stats through the same HTTPS port:
+
+Official CA deployment example:
+
+```bash
+curl https://your-domain.example.com:9090/stats
+```
+
+Self-signed certificate deployment example:
+
+```bash
+curl --cacert /var/lib/crossdesk/certs/api.crossdesk.cn_root.crt \
+  https://your-server-ip:9090/stats
+```
+
+Notes:
+- Official CA certificates are usually trusted by the operating system, so `curl` does not need an extra `--cacert`
+- Self-signed certificates require the root certificate `api.crossdesk.cn_root.crt` to be provided explicitly
+- The request host must match the domain name or IP address in the server certificate; do not replace it with `127.0.0.1` arbitrarily
+
+The `/api/stats` path is also supported. Example response:
+
+```json
+{
+  "online_device_count": 12,
+  "active_connection_count": 3
+}
+```
+
+- `online_device_count`: Number of online devices, excluding temporary `web-*` clients
+- `active_connection_count`: Number of active in-progress connections, counted by joined guest connections in transmissions
+- The response includes `Access-Control-Allow-Origin: *`, so it can be called directly from browser `fetch`
+
 ### Certificate Files
-You can find the certificate file `crossdesk.cn_root.crt` at `/var/lib/crossdesk/certs` on the host machine.
+If you use the built-in self-signed certificate flow, you can find the root certificate `api.crossdesk.cn_root.crt` at `/var/lib/crossdesk/certs` on the host machine.
 Download it to your client device and select it in the **Certificate File Path** field under the CrossDesk client’s **Self-Hosted Server Settings**.
+
+If you deploy an official CA certificate, you usually do not need to distribute this root certificate separately, because clients and `curl` will validate the certificate with the system trust store.

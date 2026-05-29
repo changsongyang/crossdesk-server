@@ -12,6 +12,7 @@
 #include <nlohmann/json.hpp>
 #include <string>
 #include <websocketpp/config/asio.hpp>
+#include <websocketpp/http/constants.hpp>
 #include <websocketpp/server.hpp>
 
 #include "device_db_manager.h"
@@ -34,6 +35,7 @@ class SignalServer {
   bool OnOpen(websocketpp::connection_hdl hdl);
   bool OnClose(websocketpp::connection_hdl hdl);
   bool OnFail(websocketpp::connection_hdl hdl);
+    void OnHttp(websocketpp::connection_hdl hdl);
   context_ptr OnTlsInit(websocketpp::connection_hdl hdl);
   bool OnPing(websocketpp::connection_hdl hdl, std::string s);
   bool OnPong(websocketpp::connection_hdl hdl, std::string s);

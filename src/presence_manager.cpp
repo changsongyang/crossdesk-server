@@ -4,9 +4,21 @@
 
 #include "log.h"
 
+namespace {
+
+bool ShouldTrackOnlineDevice(const std::string& device_id) {
+  return device_id.rfind("web-", 0) != 0;
+}
+
+}  // namespace
+
 void PresenceManager::OnLogin(const std::string& user_id,
                               const std::string& device_id,
                               websocketpp::connection_hdl hdl) {
+  if (ShouldTrackOnlineDevice(device_id)) {
+    std::lock_guard<std::mutex> lock(online_devices_mutex_);
+    online_devices_.insert(device_id);
+  }
   if (db_) {
     db_->SetDeviceOnline(device_id, true);
   }
@@ -15,6 +27,10 @@ void PresenceManager::OnLogin(const std::string& user_id,
 
 void PresenceManager::OnLogout(const std::string& device_id) {
   std::string user_id = device_id;
+  if (ShouldTrackOnlineDevice(device_id)) {
+    std::lock_guard<std::mutex> lock(online_devices_mutex_);
+    online_devices_.erase(device_id);
+  }
   if (db_) {
     db_->SetDeviceOnline(device_id, false);
   }
@@ -27,6 +43,11 @@ bool PresenceManager::IsOnline(const std::string& device_id) const {
   if (!db_) return false;
   auto res = db_->BatchQueryOnline({device_id});
   return !res.empty() && res[0].second;
+}
+
+size_t PresenceManager::GetOnlineDeviceCount() const {
+  std::lock_guard<std::mutex> lock(online_devices_mutex_);
+  return online_devices_.size();
 }
 
 std::vector<std::pair<std::string, bool>> PresenceManager::BatchQuery(

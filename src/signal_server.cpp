@@ -7,6 +7,22 @@
 #include "log.h"
 #include "signal_negotiation.h"
 
+namespace {
+
+void SetJsonResponse(server::connection_ptr con,
+                     websocketpp::http::status_code::value status,
+                     const json& body) {
+  con->set_status(status);
+  con->append_header("Content-Type", "application/json; charset=utf-8");
+  con->append_header("Access-Control-Allow-Origin", "*");
+  con->append_header("Access-Control-Allow-Methods", "GET, OPTIONS");
+  con->append_header("Access-Control-Allow-Headers", "Content-Type");
+  con->append_header("Cache-Control", "no-store");
+  con->set_body(body.dump());
+}
+
+}  // namespace
+
 SignalServer::SignalServer() {
   server_.set_error_channels(websocketpp::log::elevel::none);
   server_.set_access_channels(websocketpp::log::alevel::none);
@@ -21,6 +37,8 @@ SignalServer::SignalServer() {
   server_.set_message_handler(std::bind(&SignalServer::OnMessage, this,
                                         std::placeholders::_1,
                                         std::placeholders::_2));
+    server_.set_http_handler(
+      std::bind(&SignalServer::OnHttp, this, std::placeholders::_1));
   server_.set_tls_init_handler(
       std::bind(&SignalServer::OnTlsInit, this, std::placeholders::_1));
   server_.set_ping_handler(std::bind(&SignalServer::OnPing, this,
@@ -69,6 +87,8 @@ SignalServer::SignalServer(uint16_t port, std::string certs_dir,
   server_.set_message_handler(std::bind(&SignalServer::OnMessage, this,
                                         std::placeholders::_1,
                                         std::placeholders::_2));
+    server_.set_http_handler(
+      std::bind(&SignalServer::OnHttp, this, std::placeholders::_1));
   server_.set_tls_init_handler(
       std::bind(&SignalServer::OnTlsInit, this, std::placeholders::_1));
   server_.set_ping_handler(std::bind(&SignalServer::OnPing, this,
@@ -104,7 +124,8 @@ bool SignalServer::OnOpen(websocketpp::connection_hdl hdl) {
 }
 
 bool SignalServer::OnClose(websocketpp::connection_hdl hdl) {
-  std::string user_id = transmission_manager_->ReleaseUserFromWsHandle(hdl);
+  std::string user_id = transmission_manager_->ReleaseUserSession(hdl);
+  transmission_manager_->RemoveWsHandleLastActiveTime(hdl);
   auto conn_it = ws_connections_.find(hdl);
   connection_id conn_id =
       (conn_it != ws_connections_.end()) ? conn_it->second : 0;
@@ -123,7 +144,8 @@ bool SignalServer::OnClose(websocketpp::connection_hdl hdl) {
 }
 
 bool SignalServer::OnFail(websocketpp::connection_hdl hdl) {
-  std::string user_id = transmission_manager_->ReleaseUserFromWsHandle(hdl);
+  std::string user_id = transmission_manager_->ReleaseUserSession(hdl);
+  transmission_manager_->RemoveWsHandleLastActiveTime(hdl);
   auto conn_it = ws_connections_.find(hdl);
   connection_id conn_id =
       (conn_it != ws_connections_.end()) ? conn_it->second : 0;
@@ -139,6 +161,29 @@ bool SignalServer::OnFail(websocketpp::connection_hdl hdl) {
   }
   ws_connections_.erase(hdl);
   return true;
+}
+
+void SignalServer::OnHttp(websocketpp::connection_hdl hdl) {
+  server::connection_ptr con = server_.get_con_from_hdl(hdl);
+  const std::string resource = con->get_resource();
+
+  if (resource == "/stats" || resource == "/api/stats") {
+    json body = {
+        {"online_device_count",
+         presence_manager_ ? presence_manager_->GetOnlineDeviceCount() : 0},
+        {"active_connection_count",
+         transmission_manager_
+             ? transmission_manager_->GetActiveConnectionCount()
+             : 0},
+    };
+    SetJsonResponse(con, websocketpp::http::status_code::ok, body);
+    return;
+  }
+
+  SetJsonResponse(
+      con, websocketpp::http::status_code::not_found,
+      {{"error", "not_found"},
+       {"message", "available endpoints: /stats, /api/stats"}});
 }
 
 context_ptr SignalServer::OnTlsInit(websocketpp::connection_hdl hdl) {

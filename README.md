@@ -115,5 +115,42 @@ sudo mkdir -p /var/lib/crossdesk /var/log/crossdesk
 sudo chown -R $(id -u):$(id -g) /var/lib/crossdesk /var/log/crossdesk
 ```
 
+## 服务状态接口
+
+服务启动后，可通过同一 HTTPS 端口读取运行状态：
+
+官方 CA 部署示例：
+
+```bash
+curl https://your-domain.example.com:9090/stats
+```
+
+自签证书部署示例：
+
+```bash
+curl --cacert /var/lib/crossdesk/certs/api.crossdesk.cn_root.crt \
+  https://your-server-ip:9090/stats
+```
+
+说明：
+- 官方 CA 证书通常已被系统信任，`curl` 无需额外指定 `--cacert`
+- 自签证书需要显式指定根证书 `api.crossdesk.cn_root.crt`
+- 请求地址必须与服务端证书中的域名或 IP 一致，不能随意替换为 `127.0.0.1`
+
+也支持路径 `/api/stats`，返回示例：
+
+```json
+{
+  "online_device_count": 12,
+  "active_connection_count": 3
+}
+```
+
+- `online_device_count`：当前在线设备数，不包含临时 `web-*` 客户端
+- `active_connection_count`：当前处于连接中的会话数，按已加入传输的客户端连接数统计
+- 响应已带 `Access-Control-Allow-Origin: *`，可直接被网页端 `fetch` 调用
+
 ## 证书文件
-在宿主机的 `/var/lib/crossdesk/certs` 路径下可找到证书文件 `crossdesk.cn_root.crt`，下载到你的客户端主机，并在客户端的**自托管服务器设置**中选择相应的**证书文件路径**。
+如果使用项目自带的自签证书方案，可在宿主机的 `/var/lib/crossdesk/certs` 路径下找到根证书 `api.crossdesk.cn_root.crt`，下载到你的客户端主机，并在客户端的**自托管服务器设置**中选择相应的**证书文件路径**。
+
+如果使用官方 CA 证书，则通常不需要单独分发上述根证书，客户端和 `curl` 会直接使用系统信任链校验证书。
