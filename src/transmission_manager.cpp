@@ -134,6 +134,12 @@ bool TransmissionManager::BindHostToTransmission(
 bool TransmissionManager::BindGuestToTransmission(
     const std::string& guest_id, const std::string& transmission_id) {
   std::lock_guard<std::recursive_mutex> lock(ws_hdl_alive_checker_mutex_);
+  auto host_it = transmission_host_id_list_.find(transmission_id);
+  if (host_it != transmission_host_id_list_.end() &&
+      host_it->second == guest_id) {
+    return false;
+  }
+
   auto& guests = transmission_guest_id_list_[transmission_id];
   if (std::find(guests.begin(), guests.end(), guest_id) != guests.end()) {
     return false;
