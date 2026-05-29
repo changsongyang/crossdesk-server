@@ -54,6 +54,7 @@ class PresenceManager {
   std::function<void(websocketpp::connection_hdl, json)> send_msg_;
   DeviceDBManager* db_ = nullptr;
   std::function<void(const std::string&, json)> send_to_device_;
+  mutable std::mutex associations_mutex_;
   std::unordered_map<std::string, std::unordered_set<std::string>>
       associations_;
   mutable std::mutex online_devices_mutex_;

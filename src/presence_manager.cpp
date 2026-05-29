@@ -62,18 +62,24 @@ std::vector<std::pair<std::string, bool>> PresenceManager::BatchQuery(
 void PresenceManager::NotifyUserDevices(const std::string& user_id,
                                         const std::string& changed_device_id,
                                         bool online) {
-  if (!send_msg_) {
+  (void)user_id;
+
+  if (!send_to_device_) {
     return;
   }
 
   std::vector<std::string> watchers;
-  for (const auto& kv : associations_) {
-    const auto& watcher = kv.first;
-    const auto& watched_set = kv.second;
-    if (watched_set.find(changed_device_id) != watched_set.end()) {
-      watchers.push_back(watcher);
+  {
+    std::lock_guard<std::mutex> lock(associations_mutex_);
+    for (const auto& kv : associations_) {
+      const auto& watcher = kv.first;
+      const auto& watched_set = kv.second;
+      if (watched_set.find(changed_device_id) != watched_set.end()) {
+        watchers.push_back(watcher);
+      }
     }
   }
+
   if (watchers.empty()) {
     return;
   }
@@ -94,14 +100,13 @@ void PresenceManager::NotifyUserDevices(const std::string& user_id,
       {"online", online},
   };
   for (const auto& id : targets) {
-    if (send_to_device_) {
-      send_to_device_(id, j);
-    }
+    send_to_device_(id, j);
   }
 }
 
 void PresenceManager::UpdateUserDevices(
     const std::string& user_id, const std::vector<std::string>& device_ids) {
+  std::lock_guard<std::mutex> lock(associations_mutex_);
   auto& setref = associations_[user_id];
   setref.clear();
   for (const auto& id : device_ids) {
