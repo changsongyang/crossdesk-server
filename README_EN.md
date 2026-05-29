@@ -156,3 +156,41 @@ If you use the built-in self-signed certificate flow, you can find the root cert
 Download it to your client device and select it in the **Certificate File Path** field under the CrossDesk client’s **Self-Hosted Server Settings**.
 
 If you deploy an official CA certificate, you usually do not need to distribute this root certificate separately, because clients and `curl` will validate the certificate with the system trust store.
+
+## Admin Dashboard
+
+The server can serve an embedded admin dashboard at `/admin` on the same HTTPS port.
+
+Enable it by setting both environment variables before startup:
+
+```bash
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=change-this-password
+```
+
+Docker example:
+
+```bash
+sudo docker run -d \
+  --name crossdesk_server \
+  --network host \
+  -e EXTERNAL_IP=114.114.114.114 \
+  -e INTERNAL_IP=10.0.0.1 \
+  -e CROSSDESK_SERVER_PORT=9099 \
+  -e COTURN_PORT=3478 \
+  -e MIN_PORT=50000 \
+  -e MAX_PORT=60000 \
+  -e ADMIN_USERNAME=admin \
+  -e ADMIN_PASSWORD=change-this-password \
+  -v /var/lib/crossdesk:/var/lib/crossdesk \
+  -v /var/log/crossdesk:/var/log/crossdesk \
+  crossdesk/crossdesk-server:v1.1.3
+```
+
+After startup, open:
+
+```text
+https://your-domain.example.com:9090/admin
+```
+
+The dashboard shows online devices, online web clients, and active remote-control sessions. Its disconnect action only disconnects the selected remote-control session; it does not kick devices offline, delete devices, or change device credentials.

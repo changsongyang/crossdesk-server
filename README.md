@@ -156,3 +156,41 @@ curl --cacert /var/lib/crossdesk/certs/api.crossdesk.cn_root.crt \
 如果使用项目自带的自签证书方案，可在宿主机的 `/var/lib/crossdesk/certs` 路径下找到根证书 `api.crossdesk.cn_root.crt`，下载到你的客户端主机，并在客户端的**自托管服务器设置**中选择相应的**证书文件路径**。
 
 如果使用官方 CA 证书，则通常不需要单独分发上述根证书，客户端和 `curl` 会直接使用系统信任链校验证书。
+
+## 后台管理页面
+
+服务端可以在同一个 HTTPS 端口提供内置后台管理页面，访问路径为 `/admin`。
+
+启动前同时设置以下两个环境变量即可启用后台管理：
+
+```bash
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=change-this-password
+```
+
+Docker 示例：
+
+```bash
+sudo docker run -d \
+  --name crossdesk_server \
+  --network host \
+  -e EXTERNAL_IP=114.114.114.114 \
+  -e INTERNAL_IP=10.0.0.1 \
+  -e CROSSDESK_SERVER_PORT=9099 \
+  -e COTURN_PORT=3478 \
+  -e MIN_PORT=50000 \
+  -e MAX_PORT=60000 \
+  -e ADMIN_USERNAME=admin \
+  -e ADMIN_PASSWORD=change-this-password \
+  -v /var/lib/crossdesk:/var/lib/crossdesk \
+  -v /var/log/crossdesk:/var/log/crossdesk \
+  crossdesk/crossdesk-server:v1.1.3
+```
+
+启动后打开：
+
+```text
+https://your-domain.example.com:9090/admin
+```
+
+后台页面会显示在线设备数、在线 Web 客户端数和活动远控会话。页面中的断开操作只会断开选中的远控会话，不会踢设备下线、删除设备或修改设备凭据。

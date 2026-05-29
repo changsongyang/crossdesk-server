@@ -19,6 +19,12 @@ struct DeviceCredential {
   bool update;
 };
 
+struct OnlineDeviceInfo {
+  std::string device_id;
+  bool online = false;
+  int64_t updated_at = 0;
+};
+
 class DeviceDBManager {
  public:
   explicit DeviceDBManager(const std::string& db_path);
@@ -38,6 +44,7 @@ class DeviceDBManager {
 
   bool SetDeviceOnline(const std::string& device_id, bool online);
   int GetOnlineDeviceCount();
+  std::vector<OnlineDeviceInfo> ListOnlineDevices();
   std::vector<std::pair<std::string, bool>> BatchQueryOnline(
       const std::vector<std::string>& device_ids);
   bool SetUserDevices(const std::string& user_id,

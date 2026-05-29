@@ -11,9 +11,18 @@
 #include <condition_variable>
 #include <map>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 #include <websocketpp/server.hpp>
+
+struct TransmissionSnapshot {
+  std::string transmission_id;
+  std::string host_id;
+  std::vector<std::string> guest_ids;
+  size_t participant_count = 0;
+  bool active = false;
+};
 
 class TransmissionManager {
  public:
@@ -31,6 +40,8 @@ class TransmissionManager {
   std::vector<std::string> GetAllUserIdOfTransmission(
       const std::string& transmission_id);
 
+  std::vector<TransmissionSnapshot> GetTransmissionSnapshots();
+
   std::string GetHostIdOfTransmission(const std::string& transmission_id);
 
   bool BindHostToTransmission(const std::string& host_id,
@@ -41,6 +52,7 @@ class TransmissionManager {
                           websocketpp::connection_hdl hdl);
 
   bool ReleaseGuestFromTransmission(const std::string& guest_id);
+  bool DisconnectTransmission(const std::string& transmission_id);
   std::string ReleaseUserSession(websocketpp::connection_hdl hdl);
   std::string ReleaseUserFromWsHandle(websocketpp::connection_hdl hdl);
   void RemoveWsHandleLastActiveTime(websocketpp::connection_hdl hdl);

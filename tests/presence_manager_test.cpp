@@ -68,6 +68,15 @@ int main() {
     db.SetDeviceOnline("C-000000", true);
     expect(db.GetOnlineDeviceCount() == 1,
            "database online device count excludes web and clone clients");
+    auto online_devices = db.ListOnlineDevices();
+    expect(online_devices.size() == 1,
+           "online device list excludes web and clone clients");
+    expect(online_devices[0].device_id == "device-1",
+           "online device list returns regular device id");
+    expect(online_devices[0].online,
+           "online device list marks device online");
+    expect(online_devices[0].updated_at > 0,
+           "online device list includes updated_at");
   }
   std::filesystem::remove(db_path);
 

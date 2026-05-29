@@ -8,6 +8,10 @@ PKEY_FILE=/opt/turnserver/turn_server_pkey.pem
 
 # environment variables for crossdesk-server
 CROSSDESK_SERVER_PORT=${CROSSDESK_SERVER_PORT:-9090}
+# Optional admin dashboard environment variables:
+#   ADMIN_USERNAME and ADMIN_PASSWORD
+# If both are set, crossdesk-server enables /admin on the HTTPS port. The
+# values are inherited by the server process below.
 
 is_uint() {
   [[ "$1" =~ ^[0-9]+$ ]]

@@ -22,6 +22,19 @@ void SetJsonResponse(server::connection_ptr con,
   con->set_body(body.dump());
 }
 
+void SetAdminResponse(server::connection_ptr con,
+                      const AdminHttpResponse& response) {
+  con->set_status(
+      static_cast<websocketpp::http::status_code::value>(response.status));
+  if (!response.content_type.empty()) {
+    con->append_header("Content-Type", response.content_type);
+  }
+  for (const auto& header : response.headers) {
+    con->append_header(header.first, header.second);
+  }
+  con->set_body(response.body);
+}
+
 }  // namespace
 
 SignalServer::SignalServer() {
@@ -38,7 +51,7 @@ SignalServer::SignalServer() {
   server_.set_message_handler(std::bind(&SignalServer::OnMessage, this,
                                         std::placeholders::_1,
                                         std::placeholders::_2));
-    server_.set_http_handler(
+  server_.set_http_handler(
       std::bind(&SignalServer::OnHttp, this, std::placeholders::_1));
   server_.set_tls_init_handler(
       std::bind(&SignalServer::OnTlsInit, this, std::placeholders::_1));
@@ -65,6 +78,12 @@ SignalServer::SignalServer() {
       [this](const std::string& id, json msg) {
         SendMsg(transmission_manager_->GetWsHandle(id), msg);
       });
+  admin_auth_ = std::make_unique<AdminAuth>();
+  admin_controller_ = std::make_unique<AdminController>(
+      admin_auth_.get(), presence_manager_.get(), transmission_manager_,
+      device_db_manager_.get(), [this](const std::string& id, json msg) {
+        SendMsg(transmission_manager_->GetWsHandle(id), msg);
+      });
 }
 
 SignalServer::SignalServer(uint16_t port, std::string certs_dir,
@@ -88,7 +107,7 @@ SignalServer::SignalServer(uint16_t port, std::string certs_dir,
   server_.set_message_handler(std::bind(&SignalServer::OnMessage, this,
                                         std::placeholders::_1,
                                         std::placeholders::_2));
-    server_.set_http_handler(
+  server_.set_http_handler(
       std::bind(&SignalServer::OnHttp, this, std::placeholders::_1));
   server_.set_tls_init_handler(
       std::bind(&SignalServer::OnTlsInit, this, std::placeholders::_1));
@@ -113,6 +132,12 @@ SignalServer::SignalServer(uint16_t port, std::string certs_dir,
   presence_manager_->SetDeviceDB(device_db_manager_.get());
   presence_manager_->SetSendToDeviceCallback(
       [this](const std::string& id, json msg) {
+        SendMsg(transmission_manager_->GetWsHandle(id), msg);
+      });
+  admin_auth_ = std::make_unique<AdminAuth>();
+  admin_controller_ = std::make_unique<AdminController>(
+      admin_auth_.get(), presence_manager_.get(), transmission_manager_,
+      device_db_manager_.get(), [this](const std::string& id, json msg) {
         SendMsg(transmission_manager_->GetWsHandle(id), msg);
       });
 }
@@ -167,6 +192,16 @@ bool SignalServer::OnFail(websocketpp::connection_hdl hdl) {
 void SignalServer::OnHttp(websocketpp::connection_hdl hdl) {
   server::connection_ptr con = server_.get_con_from_hdl(hdl);
   const std::string resource = con->get_resource();
+
+  if (admin_controller_ && AdminController::IsAdminRoute(resource)) {
+    AdminHttpRequest request;
+    request.method = con->get_request().get_method();
+    request.resource = resource;
+    request.body = con->get_request_body();
+    request.cookie = con->get_request_header("Cookie");
+    SetAdminResponse(con, admin_controller_->Handle(request));
+    return;
+  }
 
   if (resource == "/stats" || resource == "/api/stats") {
     json body = {

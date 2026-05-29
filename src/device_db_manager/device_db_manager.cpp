@@ -519,6 +519,38 @@ int DeviceDBManager::GetOnlineDeviceCount() {
   return count;
 }
 
+std::vector<OnlineDeviceInfo> DeviceDBManager::ListOnlineDevices() {
+  std::lock_guard<std::recursive_mutex> lock(db_mutex_);
+  std::vector<OnlineDeviceInfo> result;
+  if (db_ == nullptr) {
+    LOG_ERROR("Database is not initialized in ListOnlineDevices.");
+    return result;
+  }
+
+  const char* sql =
+      "SELECT device_id, online, updated_at FROM device_presence "
+      "WHERE online = 1 "
+      "AND device_id NOT LIKE 'web-%' "
+      "AND device_id NOT LIKE 'C-%' "
+      "ORDER BY updated_at DESC, device_id ASC;";
+
+  sqlite3_stmt* stmt = nullptr;
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    return result;
+  }
+
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    OnlineDeviceInfo info;
+    info.device_id = ColumnText(stmt, 0);
+    info.online = sqlite3_column_int(stmt, 1) != 0;
+    info.updated_at = sqlite3_column_int64(stmt, 2);
+    result.push_back(info);
+  }
+  sqlite3_finalize(stmt);
+
+  return result;
+}
+
 std::vector<std::pair<std::string, bool>> DeviceDBManager::BatchQueryOnline(
     const std::vector<std::string>& device_ids) {
   std::lock_guard<std::recursive_mutex> lock(db_mutex_);

@@ -108,6 +108,27 @@ std::vector<std::string> TransmissionManager::GetAllUserIdOfTransmission(
   return result;
 }
 
+std::vector<TransmissionSnapshot> TransmissionManager::GetTransmissionSnapshots() {
+  std::lock_guard<std::recursive_mutex> lock(ws_hdl_alive_checker_mutex_);
+  std::vector<TransmissionSnapshot> result;
+  result.reserve(transmission_host_id_list_.size());
+
+  for (const auto& host_pair : transmission_host_id_list_) {
+    TransmissionSnapshot snapshot;
+    snapshot.transmission_id = host_pair.first;
+    snapshot.host_id = host_pair.second;
+    auto guest_it = transmission_guest_id_list_.find(host_pair.first);
+    if (guest_it != transmission_guest_id_list_.end()) {
+      snapshot.guest_ids = guest_it->second;
+    }
+    snapshot.participant_count = 1 + snapshot.guest_ids.size();
+    snapshot.active = true;
+    result.push_back(snapshot);
+  }
+
+  return result;
+}
+
 std::string TransmissionManager::GetHostIdOfTransmission(
     const std::string& transmission_id) {
   std::lock_guard<std::recursive_mutex> lock(ws_hdl_alive_checker_mutex_);
@@ -174,6 +195,15 @@ bool TransmissionManager::ReleaseGuestFromTransmission(
     }
   }
   return false;
+}
+
+bool TransmissionManager::DisconnectTransmission(
+    const std::string& transmission_id) {
+  std::lock_guard<std::recursive_mutex> lock(ws_hdl_alive_checker_mutex_);
+  if (!IsTransmissionExist(transmission_id)) {
+    return true;
+  }
+  return ReleaseTransmission(transmission_id);
 }
 
 std::string TransmissionManager::ReleaseUserSession(
