@@ -8,13 +8,30 @@
 #include <iostream>
 #include <random>
 #include <sstream>
+#include <stdexcept>
+#include <unordered_map>
 
 #include "log.h"
+
+namespace {
+
+std::string ColumnText(sqlite3_stmt* stmt, int column) {
+  const unsigned char* text = sqlite3_column_text(stmt, column);
+  return text ? reinterpret_cast<const char*>(text) : "";
+}
+
+std::string SqliteExecError(sqlite3* db, char* err_msg) {
+  return err_msg ? std::string(err_msg) : std::string(sqlite3_errmsg(db));
+}
+
+}  // namespace
 
 DeviceDBManager::DeviceDBManager(const std::string& db_path) : db_(nullptr) {
   try {
     std::filesystem::path path(db_path);
-    std::filesystem::create_directories(path.parent_path());
+    if (!path.parent_path().empty()) {
+      std::filesystem::create_directories(path.parent_path());
+    }
   } catch (const std::exception& e) {
     throw std::runtime_error("Failed to create parent directory for DB: " +
                              std::string(e.what()));
@@ -22,11 +39,22 @@ DeviceDBManager::DeviceDBManager(const std::string& db_path) : db_(nullptr) {
 
   int rc = sqlite3_open(db_path.c_str(), &db_);
   if (rc != SQLITE_OK) {
-    LOG_ERROR("Failed to open database, {}", sqlite3_errstr(rc));
+    std::string error =
+        db_ ? sqlite3_errmsg(db_) : std::string(sqlite3_errstr(rc));
+    LOG_ERROR("Failed to open database, {}", error);
+    if (db_) {
+      sqlite3_close(db_);
+    }
     db_ = nullptr;
-    return;
+    throw std::runtime_error("Failed to open database: " + error);
   }
-  InitDB();
+  try {
+    InitDB();
+  } catch (...) {
+    sqlite3_close(db_);
+    db_ = nullptr;
+    throw;
+  }
 }
 
 DeviceDBManager::~DeviceDBManager() {
@@ -34,9 +62,10 @@ DeviceDBManager::~DeviceDBManager() {
 }
 
 void DeviceDBManager::InitDB() {
+  std::lock_guard<std::recursive_mutex> lock(db_mutex_);
   if (db_ == nullptr) {
     LOG_ERROR("Database is not initialized in InitDB.");
-    return;
+    throw std::runtime_error("Database is not initialized in InitDB.");
   }
 
   const char* sql_devices =
@@ -61,32 +90,52 @@ void DeviceDBManager::InitDB() {
       "updated_at INTEGER NOT NULL"
       ");";
 
+  const char* sql_user_devices =
+      "CREATE TABLE IF NOT EXISTS user_devices ("
+      "user_id TEXT NOT NULL,"
+      "device_id TEXT NOT NULL,"
+      "PRIMARY KEY (user_id, device_id)"
+      ");";
+
   char* err_msg = nullptr;
 
   if (sqlite3_exec(db_, sql_devices, nullptr, nullptr, &err_msg) != SQLITE_OK) {
-    LOG_ERROR("Failed to create devices table: {}", err_msg);
+    std::string error = SqliteExecError(db_, err_msg);
+    LOG_ERROR("Failed to create devices table: {}", error);
     sqlite3_free(err_msg);
-    return;
+    throw std::runtime_error("Failed to create devices table: " + error);
   }
 
   if (sqlite3_exec(db_, sql_seq, nullptr, nullptr, &err_msg) != SQLITE_OK) {
-    LOG_ERROR("Failed to create device_id_seq table: {}", err_msg);
+    std::string error = SqliteExecError(db_, err_msg);
+    LOG_ERROR("Failed to create device_id_seq table: {}", error);
     sqlite3_free(err_msg);
-    return;
+    throw std::runtime_error("Failed to create device_id_seq table: " + error);
   }
 
   if (sqlite3_exec(db_, sql_seq_init, nullptr, nullptr, &err_msg) !=
       SQLITE_OK) {
-    LOG_ERROR("Failed to initialize device_id_seq: {}", err_msg);
+    std::string error = SqliteExecError(db_, err_msg);
+    LOG_ERROR("Failed to initialize device_id_seq: {}", error);
     sqlite3_free(err_msg);
-    return;
+    throw std::runtime_error("Failed to initialize device_id_seq: " + error);
   }
 
   if (sqlite3_exec(db_, sql_presence, nullptr, nullptr, &err_msg) !=
       SQLITE_OK) {
-    LOG_ERROR("Failed to create device_presence table: {}", err_msg);
+    std::string error = SqliteExecError(db_, err_msg);
+    LOG_ERROR("Failed to create device_presence table: {}", error);
     sqlite3_free(err_msg);
-    return;
+    throw std::runtime_error("Failed to create device_presence table: " +
+                             error);
+  }
+
+  if (sqlite3_exec(db_, sql_user_devices, nullptr, nullptr, &err_msg) !=
+      SQLITE_OK) {
+    std::string error = SqliteExecError(db_, err_msg);
+    LOG_ERROR("Failed to create user_devices table: {}", error);
+    sqlite3_free(err_msg);
+    throw std::runtime_error("Failed to create user_devices table: " + error);
   }
 }
 
@@ -120,6 +169,7 @@ std::string DeviceDBManager::HashPasswordWithSalt(const std::string& salt,
 }
 
 bool DeviceDBManager::DeviceIdExists(const std::string& device_id) {
+  std::lock_guard<std::recursive_mutex> lock(db_mutex_);
   if (db_ == nullptr || device_id.empty()) {
     return false;
   }
@@ -139,6 +189,7 @@ bool DeviceDBManager::DeviceIdExists(const std::string& device_id) {
 }
 
 std::string DeviceDBManager::GenerateDeviceId() {
+  std::lock_guard<std::recursive_mutex> lock(db_mutex_);
   if (db_ == nullptr) {
     LOG_ERROR("Database is not initialized in GenerateDeviceId.");
     return {};
@@ -190,6 +241,7 @@ std::string DeviceDBManager::GeneratePassword() {
 
 DeviceCredential DeviceDBManager::AddDevice(const std::string& device_id,
                                             const std::string& password) {
+  std::lock_guard<std::recursive_mutex> lock(db_mutex_);
   if (db_ == nullptr) {
     LOG_ERROR("Database is not initialized.");
     return {};
@@ -210,10 +262,8 @@ DeviceCredential DeviceDBManager::AddDevice(const std::string& device_id,
     rc = sqlite3_step(stmt);
     if (rc == SQLITE_ROW) {
       // Device exists
-      std::string salt(
-          reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0)));
-      std::string stored_hash(
-          reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1)));
+      std::string salt = ColumnText(stmt, 0);
+      std::string stored_hash = ColumnText(stmt, 1);
       std::string hash = HashPasswordWithSalt(salt, password);
 
       sqlite3_finalize(stmt);
@@ -333,6 +383,7 @@ DeviceCredential DeviceDBManager::AddDevice(const std::string& device_id,
 
 int DeviceDBManager::VerifyDevice(const std::string& device_id,
                                   const std::string& password) {
+  std::lock_guard<std::recursive_mutex> lock(db_mutex_);
   if (db_ == nullptr) {
     LOG_ERROR("Database is not initialized in VerifyDevice.");
     return -1;
@@ -351,10 +402,8 @@ int DeviceDBManager::VerifyDevice(const std::string& device_id,
   // Check if device exists
   int result = -2;
   if (sqlite3_step(stmt) == SQLITE_ROW) {
-    std::string salt(
-        reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0)));
-    std::string stored_hash(
-        reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1)));
+    std::string salt = ColumnText(stmt, 0);
+    std::string stored_hash = ColumnText(stmt, 1);
 
     std::string hash = HashPasswordWithSalt(salt, password);
     if (hash == stored_hash) {
@@ -372,6 +421,7 @@ int DeviceDBManager::VerifyDevice(const std::string& device_id,
 
 bool DeviceDBManager::UpdatePassword(const std::string& device_id,
                                      const std::string& new_password) {
+  std::lock_guard<std::recursive_mutex> lock(db_mutex_);
   if (db_ == nullptr) {
     LOG_ERROR("Database is not initialized in UpdatePassword.");
     return false;
@@ -399,6 +449,7 @@ bool DeviceDBManager::UpdatePassword(const std::string& device_id,
 }
 
 bool DeviceDBManager::RemoveDevice(const std::string& device_id) {
+  std::lock_guard<std::recursive_mutex> lock(db_mutex_);
   if (db_ == nullptr) {
     LOG_ERROR("Database is not initialized in RemoveDevice.");
     return false;
@@ -419,6 +470,7 @@ bool DeviceDBManager::RemoveDevice(const std::string& device_id) {
 
 bool DeviceDBManager::SetDeviceOnline(const std::string& device_id,
                                       bool online) {
+  std::lock_guard<std::recursive_mutex> lock(db_mutex_);
   if (db_ == nullptr) {
     LOG_ERROR("Database is not initialized in SetDeviceOnline.");
     return false;
@@ -442,6 +494,7 @@ bool DeviceDBManager::SetDeviceOnline(const std::string& device_id,
 }
 
 int DeviceDBManager::GetOnlineDeviceCount() {
+  std::lock_guard<std::recursive_mutex> lock(db_mutex_);
   if (db_ == nullptr) {
     LOG_ERROR("Database is not initialized in GetOnlineDeviceCount.");
     return 0;
@@ -466,6 +519,7 @@ int DeviceDBManager::GetOnlineDeviceCount() {
 
 std::vector<std::pair<std::string, bool>> DeviceDBManager::BatchQueryOnline(
     const std::vector<std::string>& device_ids) {
+  std::lock_guard<std::recursive_mutex> lock(db_mutex_);
   std::vector<std::pair<std::string, bool>> result;
   if (db_ == nullptr) {
     LOG_ERROR("Database is not initialized in BatchQueryOnline.");
@@ -494,7 +548,7 @@ std::vector<std::pair<std::string, bool>> DeviceDBManager::BatchQueryOnline(
 
   std::unordered_map<std::string, bool> map;
   while (sqlite3_step(stmt) == SQLITE_ROW) {
-    std::string id(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0)));
+    std::string id = ColumnText(stmt, 0);
     int online = sqlite3_column_int(stmt, 1);
     map[id] = (online != 0);
   }
@@ -505,5 +559,101 @@ std::vector<std::pair<std::string, bool>> DeviceDBManager::BatchQueryOnline(
     bool online = (it != map.end()) ? it->second : false;
     result.emplace_back(id, online);
   }
+  return result;
+}
+
+bool DeviceDBManager::SetUserDevices(
+    const std::string& user_id, const std::vector<std::string>& device_ids) {
+  std::lock_guard<std::recursive_mutex> lock(db_mutex_);
+  if (db_ == nullptr) {
+    LOG_ERROR("Database is not initialized in SetUserDevices.");
+    return false;
+  }
+
+  char* err_msg = nullptr;
+  if (sqlite3_exec(db_, "BEGIN TRANSACTION;", nullptr, nullptr, &err_msg) !=
+      SQLITE_OK) {
+    LOG_ERROR("Failed to begin SetUserDevices transaction: {}",
+              err_msg ? err_msg : sqlite3_errmsg(db_));
+    sqlite3_free(err_msg);
+    return false;
+  }
+
+  const char* delete_sql = "DELETE FROM user_devices WHERE user_id = ?;";
+  sqlite3_stmt* stmt = nullptr;
+  if (sqlite3_prepare_v2(db_, delete_sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
+    return false;
+  }
+  sqlite3_bind_text(stmt, 1, user_id.c_str(), -1, SQLITE_TRANSIENT);
+  bool ok = (sqlite3_step(stmt) == SQLITE_DONE);
+  sqlite3_finalize(stmt);
+
+  if (!ok) {
+    sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
+    return false;
+  }
+
+  const char* insert_sql =
+      "INSERT OR IGNORE INTO user_devices (user_id, device_id) VALUES (?, ?);";
+  if (sqlite3_prepare_v2(db_, insert_sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
+    return false;
+  }
+
+  for (const auto& device_id : device_ids) {
+    if (device_id.empty()) {
+      continue;
+    }
+    sqlite3_reset(stmt);
+    sqlite3_clear_bindings(stmt);
+    sqlite3_bind_text(stmt, 1, user_id.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, device_id.c_str(), -1, SQLITE_TRANSIENT);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+      ok = false;
+      break;
+    }
+  }
+  sqlite3_finalize(stmt);
+
+  if (!ok) {
+    sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
+    return false;
+  }
+
+  if (sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
+    LOG_ERROR("Failed to commit SetUserDevices transaction: {}",
+              err_msg ? err_msg : sqlite3_errmsg(db_));
+    sqlite3_free(err_msg);
+    sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
+    return false;
+  }
+
+  return true;
+}
+
+std::vector<std::string> DeviceDBManager::GetUserDevices(
+    const std::string& user_id) {
+  std::lock_guard<std::recursive_mutex> lock(db_mutex_);
+  std::vector<std::string> result;
+  if (db_ == nullptr) {
+    LOG_ERROR("Database is not initialized in GetUserDevices.");
+    return result;
+  }
+
+  const char* sql =
+      "SELECT device_id FROM user_devices WHERE user_id = ? ORDER BY "
+      "device_id;";
+  sqlite3_stmt* stmt = nullptr;
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    return result;
+  }
+
+  sqlite3_bind_text(stmt, 1, user_id.c_str(), -1, SQLITE_TRANSIENT);
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    result.push_back(ColumnText(stmt, 0));
+  }
+  sqlite3_finalize(stmt);
+
   return result;
 }

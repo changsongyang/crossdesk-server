@@ -9,6 +9,7 @@
 
 #include <sqlite3.h>
 
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -56,6 +57,7 @@ class DeviceDBManager {
 
  private:
   sqlite3* db_;
+  mutable std::recursive_mutex db_mutex_;
 };
 
 #endif  // _DEVICE_DB_MANAGER_H_
