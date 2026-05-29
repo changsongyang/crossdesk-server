@@ -6,8 +6,12 @@
 
 namespace {
 
+bool IsWebClient(const std::string& device_id) {
+  return device_id.rfind("web-", 0) == 0;
+}
+
 bool ShouldTrackOnlineDevice(const std::string& device_id) {
-  return device_id.rfind("web-", 0) != 0;
+  return !IsWebClient(device_id);
 }
 
 }  // namespace
@@ -15,9 +19,13 @@ bool ShouldTrackOnlineDevice(const std::string& device_id) {
 void PresenceManager::OnLogin(const std::string& user_id,
                               const std::string& device_id,
                               websocketpp::connection_hdl hdl) {
-  if (ShouldTrackOnlineDevice(device_id)) {
+  {
     std::lock_guard<std::mutex> lock(online_devices_mutex_);
-    online_devices_.insert(device_id);
+    if (ShouldTrackOnlineDevice(device_id)) {
+      online_devices_.insert(device_id);
+    } else {
+      online_web_clients_.insert(device_id);
+    }
   }
   if (db_) {
     db_->SetDeviceOnline(device_id, true);
@@ -27,9 +35,13 @@ void PresenceManager::OnLogin(const std::string& user_id,
 
 void PresenceManager::OnLogout(const std::string& device_id) {
   std::string user_id = device_id;
-  if (ShouldTrackOnlineDevice(device_id)) {
+  {
     std::lock_guard<std::mutex> lock(online_devices_mutex_);
-    online_devices_.erase(device_id);
+    if (ShouldTrackOnlineDevice(device_id)) {
+      online_devices_.erase(device_id);
+    } else {
+      online_web_clients_.erase(device_id);
+    }
   }
   if (db_) {
     db_->SetDeviceOnline(device_id, false);
@@ -48,6 +60,11 @@ bool PresenceManager::IsOnline(const std::string& device_id) const {
 size_t PresenceManager::GetOnlineDeviceCount() const {
   std::lock_guard<std::mutex> lock(online_devices_mutex_);
   return online_devices_.size();
+}
+
+size_t PresenceManager::GetOnlineWebClientCount() const {
+  std::lock_guard<std::mutex> lock(online_devices_mutex_);
+  return online_web_clients_.size();
 }
 
 std::vector<std::pair<std::string, bool>> PresenceManager::BatchQuery(

@@ -142,11 +142,13 @@ curl --cacert /var/lib/crossdesk/certs/api.crossdesk.cn_root.crt \
 ```json
 {
   "online_device_count": 12,
+  "online_web_client_count": 2,
   "active_connection_count": 3
 }
 ```
 
 - `online_device_count`：当前在线设备数，不包含临时 `web-*` 客户端
+- `online_web_client_count`：当前在线 Web 客户端数，仅统计临时 `web-*` 客户端
 - `active_connection_count`：当前处于连接中的会话数，按已加入传输的客户端连接数统计
 - 响应已带 `Access-Control-Allow-Origin: *`，可直接被网页端 `fetch` 调用
 

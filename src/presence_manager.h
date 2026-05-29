@@ -43,6 +43,7 @@ class PresenceManager {
   void OnLogout(const std::string& device_id);
   bool IsOnline(const std::string& device_id) const;
   size_t GetOnlineDeviceCount() const;
+  size_t GetOnlineWebClientCount() const;
   std::vector<std::pair<std::string, bool>> BatchQuery(
       const std::vector<std::string>& device_ids) const;
   void NotifyUserDevices(const std::string& user_id,
@@ -59,6 +60,7 @@ class PresenceManager {
       associations_;
   mutable std::mutex online_devices_mutex_;
   std::unordered_set<std::string> online_devices_;
+  std::unordered_set<std::string> online_web_clients_;
 };
 
 #endif

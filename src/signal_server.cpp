@@ -172,6 +172,8 @@ void SignalServer::OnHttp(websocketpp::connection_hdl hdl) {
     json body = {
         {"online_device_count",
          presence_manager_ ? presence_manager_->GetOnlineDeviceCount() : 0},
+        {"online_web_client_count",
+         presence_manager_ ? presence_manager_->GetOnlineWebClientCount() : 0},
         {"active_connection_count",
          transmission_manager_
              ? transmission_manager_->GetActiveConnectionCount()
