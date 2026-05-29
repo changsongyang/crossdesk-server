@@ -9,6 +9,10 @@ PKEY_FILE=/opt/turnserver/turn_server_pkey.pem
 # environment variables for crossdesk-server
 CROSSDESK_SERVER_PORT=${CROSSDESK_SERVER_PORT:-9090}
 
+is_uint() {
+  [[ "$1" =~ ^[0-9]+$ ]]
+}
+
 # check environment variables
 if [ -z "$EXTERNAL_IP" ] || [ -z "$INTERNAL_IP" ]; then
   echo "Error: EXTERNAL_IP and INTERNAL_IP must be set."
@@ -28,15 +32,31 @@ if [ -z "$MIN_PORT" ] || [ -z "$MAX_PORT" ]; then
   exit 1
 fi
 
+for port_name in CROSSDESK_SERVER_PORT COTURN_PORT MIN_PORT MAX_PORT; do
+  port_value="${!port_name}"
+  if ! is_uint "$port_value" || [ "$port_value" -lt 1 ] || [ "$port_value" -gt 65535 ]; then
+    echo "Error: $port_name must be an integer between 1 and 65535."
+    exit 1
+  fi
+done
+
+if [ "$MIN_PORT" -gt "$MAX_PORT" ]; then
+  echo "Error: MIN_PORT must be less than or equal to MAX_PORT."
+  exit 1
+fi
+
 # check and generate certificates if needed
 CERT_DIR="/var/lib/crossdesk/certs"
+DB_DIR="/var/lib/crossdesk/db"
+LOG_DIR="/var/log/crossdesk"
 CERT_KEY="$CERT_DIR/api.crossdesk.cn.key"
 CERT_BUNDLE="$CERT_DIR/api.crossdesk.cn_bundle.crt"
 CERT_ROOT="$CERT_DIR/api.crossdesk.cn_root.crt"
 
+mkdir -p "$CERT_DIR" "$DB_DIR" "$LOG_DIR"
+
 if [ ! -f "$CERT_KEY" ] || [ ! -f "$CERT_BUNDLE" ]; then
   echo "Certificate files not found, generating certificates..."
-  mkdir -p "$CERT_DIR"
   
   # Run generate_certs.sh with EXTERNAL_IP and output directory
   bash /docker/generate_certs.sh "$EXTERNAL_IP" "$CERT_DIR"
@@ -76,7 +96,7 @@ echo "generated coturn config at $CONF_FILE"
 echo "using certificate: $CERT_FILE"
 
 # start coturn in the background
-exec turnserver -c "$CONF_FILE" &
+turnserver -c "$CONF_FILE" &
 
 # start crossdesk-server as main foreground process
 echo "Starting crossdesk-server..."
