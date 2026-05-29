@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 
 #include "common.h"
 #include "log.h"
@@ -235,20 +236,23 @@ bool SignalServer::OnPong(websocketpp::connection_hdl hdl, std::string s) {
 
 void SignalServer::Run() {
   if (!std::filesystem::exists(certs_dir_)) {
-    LOG_ERROR("Certs dir [{}] not exist", certs_dir_);
-    return;
+    std::string message = "Certs dir [" + certs_dir_ + "] does not exist";
+    LOG_ERROR("{}", message);
+    throw std::runtime_error(message);
   }
 
   // Verify certificate files exist
   std::string cert_file = certs_dir_ + "/api.crossdesk.cn_bundle.crt";
   std::string key_file = certs_dir_ + "/api.crossdesk.cn.key";
   if (!std::filesystem::exists(cert_file)) {
-    LOG_ERROR("Certificate file not found: {}", cert_file);
-    return;
+    std::string message = "Certificate file not found: " + cert_file;
+    LOG_ERROR("{}", message);
+    throw std::runtime_error(message);
   }
   if (!std::filesystem::exists(key_file)) {
-    LOG_ERROR("Private key file not found: {}", key_file);
-    return;
+    std::string message = "Private key file not found: " + key_file;
+    LOG_ERROR("{}", message);
+    throw std::runtime_error(message);
   }
 
   server_.set_reuse_addr(true);
@@ -256,25 +260,30 @@ void SignalServer::Run() {
   LOG_INFO("Certificate directory: [{}]", certs_dir_);
   LOG_INFO("Database path: [{}]", db_path_);
 
+  // Listen on all interfaces (0.0.0.0)
+  namespace asio = websocketpp::lib::asio;
+  asio::error_code ec;
+  server_.listen(asio::ip::tcp::v4(), port_, ec);
+  if (ec) {
+    std::string message =
+        "Failed to listen on port " + std::to_string(port_) + ": " +
+        ec.message();
+    LOG_ERROR("{}", message);
+    throw std::runtime_error(message);
+  }
+  LOG_INFO("Successfully bound to port [{}]", port_);
+
+  server_.start_accept(ec);
+  if (ec) {
+    std::string message = "Failed to start accepting connections: " +
+                          ec.message();
+    LOG_ERROR("{}", message);
+    throw std::runtime_error(message);
+  }
+  LOG_INFO("Signal server listening on port [{}], waiting for connections...",
+           port_);
+
   try {
-    // Listen on all interfaces (0.0.0.0)
-    namespace asio = websocketpp::lib::asio;
-    asio::error_code ec;
-    server_.listen(asio::ip::tcp::v4(), port_, ec);
-    if (ec) {
-      LOG_ERROR("Failed to listen on port {}: {}", port_, ec.message());
-      return;
-    }
-    LOG_INFO("Successfully bound to port [{}]", port_);
-
-    server_.start_accept(ec);
-    if (ec) {
-      LOG_ERROR("Failed to start accepting connections: {}", ec.message());
-      return;
-    }
-    LOG_INFO("Signal server listening on port [{}], waiting for connections...",
-             port_);
-
     server_.run();
     LOG_INFO("Server run() returned");
   } catch (std::exception& e) {
@@ -287,9 +296,11 @@ void SignalServer::Run() {
       server_.run();
     } catch (std::exception& e2) {
       LOG_ERROR("Failed to restart server: {}", e2.what());
+      throw;
     }
   } catch (...) {
     LOG_ERROR("Unknown error occurred in server");
+    throw;
   }
 }
 
@@ -336,7 +347,7 @@ void SignalServer::OnMessage(websocketpp::connection_hdl hdl,
         if (transmission_manager_) {
           transmission_manager_->UpdateWsHandleLastActiveTime(hdl);
           json message = {{"type", "pong"}};
-          server_.send(hdl, message.dump(), websocketpp::frame::opcode::text);
+          SendMsg(hdl, message);
         }
         break;
       }
@@ -390,7 +401,7 @@ void SignalServer::OnMessage(websocketpp::connection_hdl hdl,
           for (const auto& p : statuses) {
             resp["devices"].push_back({{"id", p.first}, {"online", p.second}});
           }
-          server_.send(hdl, resp.dump(), websocketpp::frame::opcode::text);
+          SendMsg(hdl, resp);
         }
         break;
       }

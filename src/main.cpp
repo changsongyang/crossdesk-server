@@ -7,10 +7,35 @@
 #ifndef _MAIN_H_
 #define _MAIN_H_
 
+#include <cstdint>
 #include <iostream>
+#include <stdexcept>
+#include <string>
 
 #include "log/log.h"
 #include "signal_server.h"
+
+namespace {
+
+uint16_t ParsePort(const std::string& port) {
+  size_t parsed_len = 0;
+  int value = 0;
+
+  try {
+    value = std::stoi(port, &parsed_len);
+  } catch (const std::exception&) {
+    throw std::invalid_argument("Invalid port: " + port);
+  }
+
+  if (parsed_len != port.size() || value < 1 || value > 65535) {
+    throw std::out_of_range("Port must be an integer in range 1-65535: " +
+                            port);
+  }
+
+  return static_cast<uint16_t>(value);
+}
+
+}  // namespace
 
 int main(int argc, char* argv[]) {
   std::string port = "9090";
@@ -25,7 +50,7 @@ int main(int argc, char* argv[]) {
   InitLogger(log_dir);
 
   try {
-    SignalServer s(std::stoi(port), certs_dir, db_path);
+    SignalServer s(ParsePort(port), certs_dir, db_path);
     s.Run();
   } catch (std::exception& e) {
     LOG_ERROR("Fatal error: {}", e.what());

@@ -26,8 +26,6 @@ void InitLogger(const std::string& log_dir) {
 
 std::shared_ptr<spdlog::logger> get_logger() {
   std::call_once(g_logger_once_flag, []() {
-    g_logger_created.store(true);
-
     std::error_code ec;
     std::filesystem::create_directories(g_log_dir, ec);
 
@@ -49,13 +47,23 @@ std::shared_ptr<spdlog::logger> get_logger() {
 
     std::vector<spdlog::sink_ptr> sinks;
     sinks.push_back(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
-    sinks.push_back(std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
-        filename, 5 * 1024 * 1024, 3));
+
+    try {
+      if (ec) {
+        throw spdlog::spdlog_ex("failed to create log directory: " +
+                                ec.message());
+      }
+      sinks.push_back(std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
+          filename, 5 * 1024 * 1024, 3));
+    } catch (const std::exception& e) {
+      std::cerr << "Warning: file logging disabled: " << e.what() << std::endl;
+    }
 
     g_logger = std::make_shared<spdlog::logger>(LOGGER_NAME, sinks.begin(),
                                                 sinks.end());
     g_logger->flush_on(spdlog::level::info);
     spdlog::register_logger(g_logger);
+    g_logger_created.store(true);
   });
 
   return g_logger;
