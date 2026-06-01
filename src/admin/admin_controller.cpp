@@ -119,6 +119,17 @@ std::string QueryStringParam(const std::map<std::string, std::string>& params,
   return it == params.end() ? "" : it->second;
 }
 
+std::string QueryStringParam(const std::map<std::string, std::string>& params,
+                             const std::string& key,
+                             const std::string& fallback) {
+  auto it = params.find(key);
+  return it == params.end() || it->second.empty() ? fallback : it->second;
+}
+
+std::string ClientKind(const std::string& device_id) {
+  return device_id.rfind("web-", 0) == 0 ? "web" : "device";
+}
+
 const char kAdminHtml[] = R"HTML(<!doctype html>
 <html lang="en">
 <head>
@@ -148,9 +159,28 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
     .toolbar h2 { font-size: 18px; margin: 0; }
     .actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
     select { border: 1px solid #b8c2cc; border-radius: 6px; padding: 9px 10px; background: #ffffff; }
+    .table-wrap { overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; font-size: 14px; }
     th, td { border-bottom: 1px solid #edf0f3; padding: 10px 8px; text-align: left; vertical-align: top; }
     th { color: #667085; font-weight: 600; }
+    .segments { display: flex; gap: 6px; margin: 0 0 12px; overflow-x: auto; padding-bottom: 2px; }
+    .segments button { white-space: nowrap; border-color: #d0d5dd; color: #344054; }
+    .segments button.active { background: #1264a3; border-color: #1264a3; color: #ffffff; }
+    .presence-table th:nth-child(1) { min-width: 190px; }
+    .presence-table th:nth-child(3) { min-width: 150px; }
+    .presence-table th:nth-child(5) { min-width: 130px; }
+    .device-id { font-weight: 600; word-break: break-all; }
+    .subline { display: block; color: #667085; font-size: 12px; margin-top: 3px; }
+    .badge { border-radius: 999px; display: inline-flex; align-items: center; font-size: 12px; font-weight: 700; line-height: 1; padding: 5px 8px; }
+    .badge.online { background: #dcfae6; color: #067647; }
+    .badge.offline { background: #f2f4f7; color: #475467; }
+    .badge.active { background: #fef0c7; color: #b54708; margin-left: 6px; }
+    .badge.web { background: #e0f2fe; color: #026aa2; }
+    .details-row td { background: #f9fafb; }
+    .detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px 16px; }
+    .detail-grid span { color: #667085; display: block; font-size: 12px; }
+    .detail-grid strong { display: block; font-size: 14px; margin-top: 2px; }
+    .sort-order { min-width: 62px; }
     .pager { display: flex; gap: 8px; align-items: center; justify-content: flex-end; margin-top: 12px; color: #667085; font-size: 13px; flex-wrap: wrap; }
     .status { color: #067647; font-weight: 600; }
     .offline { color: #667085; font-weight: 600; }
@@ -158,7 +188,7 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
     .error { color: #b42318; min-height: 20px; }
     .empty { color: #667085; text-align: center; padding: 16px 8px; }
     .hidden { display: none; }
-    @media (max-width: 860px) { .metrics, .grid { grid-template-columns: 1fr; } header { padding: 12px 16px; } main { padding: 16px; } .toolbar { align-items: stretch; flex-direction: column; } .actions { justify-content: flex-start; } }
+    @media (max-width: 860px) { .metrics, .grid { grid-template-columns: 1fr; } header { padding: 12px 16px; } main { padding: 16px; } .toolbar { align-items: stretch; flex-direction: column; } .actions { justify-content: flex-start; } input, select { max-width: 100%; } }
   </style>
 </head>
 <body>
@@ -198,6 +228,17 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
             <h2>Client Presence</h2>
             <div class="actions">
               <input id="device-search" placeholder="Search device ID">
+              <select id="device-sort" aria-label="Device sort">
+                <option value="status">Status</option>
+                <option value="updated_at">Last seen</option>
+                <option value="online_since">Online since</option>
+                <option value="current_online">Current online</option>
+                <option value="total_online">Total online</option>
+                <option value="total_control">Total control</option>
+                <option value="total_controlled">Total controlled</option>
+                <option value="device_id">Device ID</option>
+              </select>
+              <button id="device-order" class="sort-order" type="button" aria-label="Toggle sort order">DESC</button>
               <select id="device-limit" aria-label="Devices per page">
                 <option value="50">50 / page</option>
                 <option value="100">100 / page</option>
@@ -205,10 +246,19 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
               </select>
             </div>
           </div>
-          <table>
-            <thead><tr><th>Device ID</th><th>Status</th><th>Time</th><th>Current online</th><th>Total online</th><th>Total control</th><th>Total controlled</th></tr></thead>
-            <tbody id="devices"></tbody>
-          </table>
+          <div class="segments" id="device-filters" role="tablist" aria-label="Device filters">
+            <button type="button" data-device-filter="online">Online <span id="device-count-online">0</span></button>
+            <button type="button" data-device-filter="active">Remote <span id="device-count-active">0</span></button>
+            <button type="button" data-device-filter="offline">Offline <span id="device-count-offline">0</span></button>
+            <button type="button" data-device-filter="all">All <span id="device-count-all">0</span></button>
+            <button type="button" data-device-filter="web">Web <span id="device-count-web">0</span></button>
+          </div>
+          <div class="table-wrap">
+            <table class="presence-table">
+              <thead><tr><th>Client</th><th>State</th><th>Seen</th><th>Current online</th><th>Session</th><th>Action</th></tr></thead>
+              <tbody id="devices"></tbody>
+            </table>
+          </div>
           <div class="pager">
             <button id="device-prev" type="button">Previous</button>
             <span id="device-page-info">0-0 of 0</span>
@@ -245,10 +295,20 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
     const dashboardView = document.getElementById('dashboard-view');
     const logoutButton = document.getElementById('logout');
     const state = {
-      devices: {limit: 50, offset: 0, total: 0, search: ''},
+      devices: {
+        limit: 50,
+        offset: 0,
+        total: 0,
+        search: '',
+        filter: 'online',
+        sort: 'status',
+        order: 'desc'
+      },
       sessions: {limit: 50, offset: 0, total: 0, search: ''}
     };
     const searchTimers = {devices: null, sessions: null};
+    const expandedDevices = new Set();
+    let currentDevices = [];
     let statsTimer = null;
     let listTimer = null;
     let durationTimer = null;
@@ -345,18 +405,61 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
       return element;
     }
 
+    function appendBadge(parent, value, className) {
+      return appendText(parent, 'span', value, `badge ${className}`);
+    }
+
+    function setDurationDataset(cell, kind, device, base, capturedAt) {
+      cell.dataset.duration = kind;
+      cell.dataset.online = device.online ? '1' : '0';
+      cell.dataset.base = String(base || 0);
+      cell.dataset.capturedAt = String(capturedAt);
+    }
+
+    function sessionSummary(device) {
+      const controlling = Number(device.active_control_count) || 0;
+      const controlled = Number(device.active_controlled_count) || 0;
+      const parts = [];
+      if (controlling > 0) parts.push(`controlling ${controlling}`);
+      if (controlled > 0) parts.push(`controlled ${controlled}`);
+      return parts.join(', ') || '-';
+    }
+
+    function appendDetailItem(parent, label, value, className, dataset) {
+      const item = document.createElement('div');
+      appendText(item, 'span', label);
+      const strong = appendText(item, 'strong', value, className);
+      if (dataset) {
+        Object.keys(dataset).forEach(key => {
+          strong.dataset[key] = dataset[key];
+        });
+      }
+      parent.appendChild(item);
+      return strong;
+    }
+
     function renderDevices(devices) {
+      currentDevices = devices;
       const body = document.getElementById('devices');
       body.textContent = '';
       if (!devices.length) {
-        appendEmptyRow(body, 7);
+        appendEmptyRow(body, 6);
         return;
       }
       const capturedAt = Math.floor(Date.now() / 1000);
       devices.forEach(device => {
+        const activeSessions = Number(device.active_session_count) || 0;
         const row = document.createElement('tr');
-        appendText(row, 'td', device.id);
-        appendText(row, 'td', device.online ? 'online' : 'offline', device.online ? 'status' : 'offline');
+        const clientCell = document.createElement('td');
+        appendText(clientCell, 'div', device.id, 'device-id');
+        appendText(clientCell, 'span', device.kind === 'web' ? 'web client' : 'device', 'subline');
+        row.appendChild(clientCell);
+
+        const statusCell = document.createElement('td');
+        appendBadge(statusCell, device.kind === 'web' ? 'web' : (device.online ? 'online' : 'offline'),
+          device.kind === 'web' ? 'web' : (device.online ? 'online' : 'offline'));
+        if (activeSessions > 0) appendBadge(statusCell, 'remote', 'active');
+        row.appendChild(statusCell);
 
         const timeCell = document.createElement('td');
         appendText(timeCell, 'div', formatTime(device.online ? device.online_since : device.updated_at));
@@ -364,19 +467,41 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
         row.appendChild(timeCell);
 
         const currentCell = appendText(row, 'td', device.online ? formatDuration(device.online_duration_seconds) : '-');
-        currentCell.dataset.duration = 'current';
-        currentCell.dataset.online = device.online ? '1' : '0';
-        currentCell.dataset.base = String(device.online_duration_seconds || 0);
-        currentCell.dataset.capturedAt = String(capturedAt);
+        setDurationDataset(currentCell, 'current', device, device.online_duration_seconds, capturedAt);
+        appendText(row, 'td', sessionSummary(device));
 
-        const totalCell = appendText(row, 'td', formatDuration(device.total_online_seconds));
-        totalCell.dataset.duration = 'total';
-        totalCell.dataset.online = device.online ? '1' : '0';
-        totalCell.dataset.base = String(device.total_online_seconds || 0);
-        totalCell.dataset.capturedAt = String(capturedAt);
-        appendText(row, 'td', formatDuration(device.total_control_seconds));
-        appendText(row, 'td', formatDuration(device.total_controlled_seconds));
+        const actionCell = document.createElement('td');
+        const detailButton = document.createElement('button');
+        detailButton.type = 'button';
+        detailButton.textContent = expandedDevices.has(device.id) ? 'Hide' : 'Details';
+        detailButton.addEventListener('click', () => {
+          if (expandedDevices.has(device.id)) expandedDevices.delete(device.id);
+          else expandedDevices.add(device.id);
+          renderDevices(currentDevices);
+        });
+        actionCell.appendChild(detailButton);
+        row.appendChild(actionCell);
         body.appendChild(row);
+
+        if (expandedDevices.has(device.id)) {
+          const detailsRow = document.createElement('tr');
+          detailsRow.className = 'details-row';
+          const detailsCell = document.createElement('td');
+          detailsCell.colSpan = 6;
+          const details = document.createElement('div');
+          details.className = 'detail-grid';
+          const totalOnline = appendDetailItem(
+            details, 'Total online', formatDuration(device.total_online_seconds));
+          setDurationDataset(totalOnline, 'total', device, device.total_online_seconds, capturedAt);
+          appendDetailItem(details, 'Total control', formatDuration(device.total_control_seconds));
+          appendDetailItem(details, 'Total controlled', formatDuration(device.total_controlled_seconds));
+          appendDetailItem(details, 'Online since', formatTime(device.online_since));
+          appendDetailItem(details, 'Last online', formatTime(device.online ? 0 : device.updated_at));
+          appendDetailItem(details, 'Active session', sessionSummary(device));
+          detailsCell.appendChild(details);
+          detailsRow.appendChild(detailsCell);
+          body.appendChild(detailsRow);
+        }
       });
       updateLiveDurations();
     }
@@ -418,6 +543,9 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
       const params = new URLSearchParams();
       params.set('device_limit', state.devices.limit);
       params.set('device_offset', state.devices.offset);
+      params.set('device_filter', state.devices.filter);
+      params.set('device_sort', state.devices.sort);
+      params.set('device_order', state.devices.order);
       params.set('session_limit', state.sessions.limit);
       params.set('session_offset', state.sessions.offset);
       if (state.devices.search) params.set('device_search', state.devices.search);
@@ -446,6 +574,25 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
       document.getElementById(`${prefix}-prev`).disabled = page.offset === 0;
       document.getElementById(`${prefix}-next`).disabled = page.offset + page.limit >= page.total;
       document.getElementById(`${prefix}-limit`).value = String(page.limit);
+      if (kind === 'devices') {
+        document.getElementById('device-sort').value = page.sort;
+        document.getElementById('device-order').textContent = page.order === 'asc' ? 'ASC' : 'DESC';
+        document.getElementById('device-order').title = page.order === 'asc' ? 'Ascending' : 'Descending';
+      }
+    }
+
+    function applyDeviceCounts(counts) {
+      if (counts) {
+        ['all', 'online', 'offline', 'active', 'web'].forEach(filter => {
+          const count = Number(counts[filter]) || 0;
+          const countElement = document.getElementById(`device-count-${filter}`);
+          if (countElement) countElement.textContent = count;
+        });
+      }
+      document.querySelectorAll('[data-device-filter]').forEach(button => {
+        button.classList.toggle('active', button.dataset.deviceFilter === state.devices.filter);
+        button.setAttribute('aria-selected', button.dataset.deviceFilter === state.devices.filter ? 'true' : 'false');
+      });
     }
 
     function applyStats(stats) {
@@ -551,6 +698,7 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
         refreshButton.disabled = false;
         return refreshLists();
       }
+      applyDeviceCounts(data.device_counts);
       renderDevices(data.devices || []);
       renderSessions(data.sessions || []);
       updatePager('devices');
@@ -581,6 +729,25 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
       state.devices.offset = 0;
       clearTimeout(searchTimers.devices);
       searchTimers.devices = setTimeout(refreshLists, 250);
+    });
+    document.querySelectorAll('[data-device-filter]').forEach(button => {
+      button.addEventListener('click', () => {
+        state.devices.filter = button.dataset.deviceFilter;
+        state.devices.offset = 0;
+        expandedDevices.clear();
+        applyDeviceCounts();
+        refreshLists();
+      });
+    });
+    document.getElementById('device-sort').addEventListener('change', (event) => {
+      state.devices.sort = event.target.value;
+      state.devices.offset = 0;
+      refreshLists();
+    });
+    document.getElementById('device-order').addEventListener('click', () => {
+      state.devices.order = state.devices.order === 'asc' ? 'desc' : 'asc';
+      state.devices.offset = 0;
+      refreshLists();
     });
     document.getElementById('session-search').addEventListener('input', (event) => {
       state.sessions.search = event.target.value.trim();
@@ -619,6 +786,7 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
       }
     });
     document.getElementById('list-refresh').addEventListener('click', refreshLists);
+    applyDeviceCounts();
     refreshStats().then((ok) => {
       if (ok) showDashboard();
       else showLogin('');
@@ -782,6 +950,12 @@ AdminHttpResponse AdminController::HandleOverview(
   size_t device_offset =
       QuerySizeParam(params, "device_offset", 0, static_cast<size_t>(-1));
   std::string device_search = QueryStringParam(params, "device_search");
+  std::string device_filter =
+      QueryStringParam(params, "device_filter", "online");
+  std::string device_sort =
+      QueryStringParam(params, "device_sort", "status");
+  std::string device_order =
+      QueryStringParam(params, "device_order", "desc");
   size_t session_limit =
       QuerySizeParam(params, "session_limit", kDefaultPageLimit, kMaxPageLimit);
   size_t session_offset =
@@ -790,13 +964,33 @@ AdminHttpResponse AdminController::HandleOverview(
 
   nlohmann::json devices = nlohmann::json::array();
   size_t devices_total = 0;
+  nlohmann::json device_counts = {{"all", 0},
+                                  {"online", 0},
+                                  {"offline", 0},
+                                  {"active", 0},
+                                  {"web", 0}};
+  size_t online_device_fallback = 0;
   if (db_) {
-    devices_total = static_cast<size_t>(db_->CountDevicePresence(device_search));
+    device_counts["all"] = db_->CountDevicePresence(device_search, "all");
+    device_counts["online"] =
+        db_->CountDevicePresence(device_search, "online");
+    device_counts["offline"] =
+        db_->CountDevicePresence(device_search, "offline");
+    device_counts["active"] =
+        db_->CountDevicePresence(device_search, "active");
+    device_counts["web"] = db_->CountDevicePresence(device_search, "web");
+    devices_total =
+        static_cast<size_t>(db_->CountDevicePresence(device_search,
+                                                     device_filter));
+    online_device_fallback = static_cast<size_t>(db_->CountOnlineDevices());
     for (const auto& device :
-         db_->ListDevicePresence(device_limit, device_offset, device_search)) {
+         db_->ListDevicePresence(device_limit, device_offset, device_search,
+                                 device_filter, device_sort, device_order)) {
+      int64_t active_control_count = device.active_control_count;
+      int64_t active_controlled_count = device.active_controlled_count;
       devices.push_back({{"id", device.device_id},
                          {"online", device.online},
-                         {"kind", "device"},
+                         {"kind", ClientKind(device.device_id)},
                          {"updated_at", device.updated_at},
                          {"last_online_at",
                           device.online ? 0 : device.updated_at},
@@ -808,7 +1002,13 @@ AdminHttpResponse AdminController::HandleOverview(
                          {"total_control_seconds",
                           device.total_control_seconds},
                          {"total_controlled_seconds",
-                          device.total_controlled_seconds}});
+                          device.total_controlled_seconds},
+                         {"active_control_count", active_control_count},
+                         {"active_controlled_count",
+                          active_controlled_count},
+                         {"active_session_count",
+                          active_control_count +
+                              active_controlled_count}});
     }
   }
 
@@ -825,12 +1025,15 @@ AdminHttpResponse AdminController::HandleOverview(
     }
   }
 
-  nlohmann::json stats = BuildStats(devices_total);
+  nlohmann::json stats = BuildStats(online_device_fallback);
 
   nlohmann::json devices_page = {{"limit", device_limit},
                                  {"offset", device_offset},
                                  {"total", devices_total},
-                                 {"search", device_search}};
+                                 {"search", device_search},
+                                 {"filter", device_filter},
+                                 {"sort", device_sort},
+                                 {"order", device_order}};
   nlohmann::json sessions_page = {{"limit", session_limit},
                                   {"offset", session_offset},
                                   {"total", sessions_total},
@@ -839,6 +1042,7 @@ AdminHttpResponse AdminController::HandleOverview(
   return JsonResponse(200, {{"stats", stats},
                             {"devices", devices},
                             {"devices_page", devices_page},
+                            {"device_counts", device_counts},
                             {"sessions", sessions},
                             {"sessions_page", sessions_page}});
 }

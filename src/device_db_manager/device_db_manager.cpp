@@ -3,6 +3,7 @@
 #include <openssl/sha.h>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <filesystem>
 #include <iomanip>
@@ -36,6 +37,67 @@ std::string EscapeLikePattern(const std::string& value) {
     escaped.push_back(ch);
   }
   return escaped;
+}
+
+std::string ToLower(std::string value) {
+  std::transform(value.begin(), value.end(), value.begin(),
+                 [](unsigned char ch) {
+                   return static_cast<char>(std::tolower(ch));
+                 });
+  return value;
+}
+
+std::string DevicePresenceFilterClause(const std::string& filter) {
+  std::string normalized = ToLower(filter);
+  if (normalized == "web") {
+    return "device_id LIKE 'web-%' ";
+  }
+
+  std::string clause =
+      "device_id NOT LIKE 'web-%' "
+      "AND device_id NOT LIKE 'C-%' ";
+  if (normalized == "online") {
+    clause += "AND online = 1 ";
+  } else if (normalized == "offline") {
+    clause += "AND online = 0 ";
+  } else if (normalized == "active") {
+    clause +=
+        "AND EXISTS ("
+        "SELECT 1 FROM remote_control_sessions "
+        "WHERE guest_id = device_presence.device_id "
+        "OR host_id = device_presence.device_id) ";
+  }
+  return clause;
+}
+
+std::string DevicePresenceSortClause(const std::string& sort,
+                                     const std::string& order) {
+  const std::string direction = ToLower(order) == "asc" ? "ASC" : "DESC";
+  const std::string normalized = ToLower(sort);
+
+  if (normalized == "status") {
+    return "online " + direction + ", updated_at DESC, device_id ASC ";
+  }
+
+  std::string expression = "updated_at";
+  if (normalized == "device_id" || normalized == "id") {
+    expression = "device_id";
+  } else if (normalized == "online_since") {
+    expression = "online_since";
+  } else if (normalized == "current_online") {
+    expression = "online_duration_seconds";
+  } else if (normalized == "total_online") {
+    expression = "total_online_seconds";
+  } else if (normalized == "total_control") {
+    expression = "total_control_seconds";
+  } else if (normalized == "total_controlled") {
+    expression = "total_controlled_seconds";
+  } else if (normalized == "active_sessions") {
+    expression = "active_session_count";
+  }
+
+  return expression + " " + direction +
+         ", online DESC, updated_at DESC, device_id ASC ";
 }
 
 bool ColumnExists(sqlite3* db, const std::string& table,
@@ -979,17 +1041,16 @@ int DeviceDBManager::CountOnlineDevices(const std::string& search) {
   return count;
 }
 
-int DeviceDBManager::CountDevicePresence(const std::string& search) {
+int DeviceDBManager::CountDevicePresence(const std::string& search,
+                                         const std::string& filter) {
   std::lock_guard<std::recursive_mutex> lock(db_mutex_);
   if (db_ == nullptr) {
     LOG_ERROR("Database is not initialized in CountDevicePresence.");
     return 0;
   }
 
-  std::string sql =
-      "SELECT COUNT(*) FROM device_presence "
-      "WHERE device_id NOT LIKE 'web-%' "
-      "AND device_id NOT LIKE 'C-%' ";
+  std::string sql = "SELECT COUNT(*) FROM device_presence WHERE " +
+                    DevicePresenceFilterClause(filter);
   if (!search.empty()) {
     sql += "AND device_id LIKE ? ESCAPE '\\' ";
   }
@@ -1130,7 +1191,9 @@ std::vector<OnlineDeviceInfo> DeviceDBManager::ListOnlineDevices(
 }
 
 std::vector<OnlineDeviceInfo> DeviceDBManager::ListDevicePresence(
-    size_t limit, size_t offset, const std::string& search) {
+    size_t limit, size_t offset, const std::string& search,
+    const std::string& filter, const std::string& sort,
+    const std::string& order) {
   std::lock_guard<std::recursive_mutex> lock(db_mutex_);
   std::vector<OnlineDeviceInfo> result;
   if (db_ == nullptr) {
@@ -1155,14 +1218,27 @@ std::vector<OnlineDeviceInfo> DeviceDBManager::ListDevicePresence(
       "SELECT SUM(MAX(0, CAST(strftime('%s','now') AS INTEGER) - started_at)) "
       "FROM remote_control_sessions "
       "WHERE host_id = device_presence.device_id), 0) "
-      "AS total_controlled_seconds "
+      "AS total_controlled_seconds, "
+      "COALESCE(("
+      "SELECT COUNT(*) FROM remote_control_sessions "
+      "WHERE guest_id = device_presence.device_id), 0) "
+      "AS active_control_count, "
+      "COALESCE(("
+      "SELECT COUNT(*) FROM remote_control_sessions "
+      "WHERE host_id = device_presence.device_id), 0) "
+      "AS active_controlled_count, "
+      "COALESCE(("
+      "SELECT COUNT(*) FROM remote_control_sessions "
+      "WHERE guest_id = device_presence.device_id "
+      "OR host_id = device_presence.device_id), 0) "
+      "AS active_session_count "
       "FROM device_presence "
-      "WHERE device_id NOT LIKE 'web-%' "
-      "AND device_id NOT LIKE 'C-%' ";
+      "WHERE " +
+      DevicePresenceFilterClause(filter);
   if (!search.empty()) {
     sql += "AND device_id LIKE ? ESCAPE '\\' ";
   }
-  sql += "ORDER BY online DESC, updated_at DESC, device_id ASC "
+  sql += "ORDER BY " + DevicePresenceSortClause(sort, order) +
          "LIMIT ? OFFSET ?;";
 
   sqlite3_stmt* stmt = nullptr;
@@ -1189,6 +1265,8 @@ std::vector<OnlineDeviceInfo> DeviceDBManager::ListDevicePresence(
     info.total_online_seconds = sqlite3_column_int64(stmt, 5);
     info.total_control_seconds = sqlite3_column_int64(stmt, 6);
     info.total_controlled_seconds = sqlite3_column_int64(stmt, 7);
+    info.active_control_count = sqlite3_column_int64(stmt, 8);
+    info.active_controlled_count = sqlite3_column_int64(stmt, 9);
     result.push_back(info);
   }
   sqlite3_finalize(stmt);

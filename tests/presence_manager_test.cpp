@@ -118,6 +118,15 @@ int main() {
            "offline device no longer counts as online");
     expect(db.CountDevicePresence("device-1") == 1,
            "offline device remains in presence count");
+    expect(db.CountDevicePresence("", "online") == 2,
+           "presence count supports online filter");
+    expect(db.CountDevicePresence("", "offline") == 1,
+           "presence count supports offline filter");
+    auto sorted_presence =
+        db.ListDevicePresence(10, 0, "", "all", "device_id", "asc");
+    expect(!sorted_presence.empty() &&
+               sorted_presence[0].device_id == "device-1",
+           "presence list supports device id sort");
     auto offline_devices = db.ListDevicePresence(10, 0, "device-1");
     expect(offline_devices.size() == 1 && !offline_devices[0].online,
            "presence list includes offline device");
@@ -132,6 +141,18 @@ int main() {
     expect(db.StartRemoteControlSession("tx-1", "device-2", "device-1"),
            "remote control session starts");
     std::this_thread::sleep_for(std::chrono::seconds(1));
+    expect(db.CountDevicePresence("", "active") == 2,
+           "presence count supports active remote filter");
+    auto active_devices =
+        db.ListDevicePresence(10, 0, "", "active", "device_id", "asc");
+    expect(active_devices.size() == 2,
+           "presence list supports active remote filter");
+    expect(active_devices[0].device_id == "device-1" &&
+               active_devices[0].active_control_count == 1,
+           "presence list reports active control count");
+    expect(active_devices[1].device_id == "device-2" &&
+               active_devices[1].active_controlled_count == 1,
+           "presence list reports active controlled count");
     auto guest_control = db.ListDevicePresence(10, 0, "device-1");
     auto host_controlled = db.ListDevicePresence(10, 0, "device-2");
     expect(!guest_control.empty() &&

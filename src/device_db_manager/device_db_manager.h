@@ -30,6 +30,8 @@ struct OnlineDeviceInfo {
   int64_t total_online_seconds = 0;
   int64_t total_control_seconds = 0;
   int64_t total_controlled_seconds = 0;
+  int64_t active_control_count = 0;
+  int64_t active_controlled_count = 0;
 };
 
 struct OnlineDurationStats {
@@ -66,13 +68,17 @@ class DeviceDBManager {
                                const std::string& guest_id);
   int GetOnlineDeviceCount();
   int CountOnlineDevices(const std::string& search = "");
-  int CountDevicePresence(const std::string& search = "");
+  int CountDevicePresence(const std::string& search = "",
+                          const std::string& filter = "all");
   OnlineDurationStats GetOnlineDurationStats();
   std::vector<OnlineDeviceInfo> ListOnlineDevices();
   std::vector<OnlineDeviceInfo> ListOnlineDevices(
       size_t limit, size_t offset, const std::string& search);
   std::vector<OnlineDeviceInfo> ListDevicePresence(
-      size_t limit, size_t offset, const std::string& search);
+      size_t limit, size_t offset, const std::string& search,
+      const std::string& filter = "all",
+      const std::string& sort = "status",
+      const std::string& order = "desc");
   std::vector<std::pair<std::string, bool>> BatchQueryOnline(
       const std::vector<std::string>& device_ids);
   bool SetUserDevices(const std::string& user_id,

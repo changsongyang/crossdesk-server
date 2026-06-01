@@ -115,10 +115,13 @@ int main() {
     db.SetDeviceOnline("device-admin-1", true);
     db.SetDeviceOnline("device-admin-offline", true);
     db.SetDeviceOnline("device-admin-offline", false);
+    db.SetDeviceOnline("web-admin-1", true);
     db.StartRemoteControlSession("tx-admin", "device-admin-1",
                                  "device-admin-offline");
     db.EndRemoteControlSession("tx-admin", "device-admin-1",
                                "device-admin-offline");
+    db.StartRemoteControlSession("tx-admin-live", "device-admin-1",
+                                 "device-admin-offline");
     AdminController db_controller(&auth, nullptr, transmission, &db,
                                   [](const std::string&, nlohmann::json) {});
     AdminHttpResponse db_overview = db_controller.Handle(
@@ -128,7 +131,7 @@ int main() {
            "overview with device durations returns ok");
     auto db_overview_body = nlohmann::json::parse(db_overview.body);
     expect(db_overview_body["devices"].size() == 1,
-           "overview returns filtered online device");
+           "overview defaults to filtered online devices");
     expect(db_overview_body["devices"][0]["online_since"] > 0,
            "overview reports device online_since");
     expect(db_overview_body["devices"][0].contains("online_duration_seconds"),
@@ -145,9 +148,21 @@ int main() {
            "overview stats include total control duration");
     expect(db_overview_body["stats"].contains("total_controlled_seconds"),
            "overview stats include total controlled duration");
+    expect(db_overview_body["device_counts"]["all"] == 1,
+           "overview search scopes all device count");
+    expect(db_overview_body["device_counts"]["online"] == 1,
+           "overview reports online device count");
+    expect(db_overview_body["device_counts"]["offline"] == 0,
+           "overview search scopes offline count");
+    expect(db_overview_body["device_counts"]["active"] == 1,
+           "overview search scopes active count");
+    expect(db_overview_body["device_counts"]["web"] == 0,
+           "overview search scopes web count");
 
     AdminHttpResponse offline_overview = db_controller.Handle(
-        {"GET", "/api/admin/overview?device_search=device-admin-offline", "",
+        {"GET",
+         "/api/admin/overview?device_filter=offline&device_search=device-admin-offline",
+         "",
          "cd_admin_session=" + *token});
     expect(offline_overview.status == 200,
            "overview with offline device returns ok");
@@ -160,6 +175,36 @@ int main() {
            "overview reports last online timestamp for offline device");
     expect(offline_body["devices"][0]["online_duration_seconds"] == 0,
            "overview reports zero current duration for offline device");
+
+    AdminHttpResponse active_overview = db_controller.Handle(
+        {"GET",
+         "/api/admin/overview?device_filter=active&device_sort=device_id&device_order=asc",
+         "",
+         "cd_admin_session=" + *token});
+    expect(active_overview.status == 200,
+           "overview with active device filter returns ok");
+    auto active_body = nlohmann::json::parse(active_overview.body);
+    expect(active_body["devices_page"]["total"] == 2,
+           "overview reports active device total");
+    expect(active_body["devices"].size() == 2,
+           "overview returns active devices");
+    expect(active_body["devices"][0]["id"] == "device-admin-1",
+           "overview applies device sort order");
+    expect(active_body["devices"][0]["active_controlled_count"] == 1,
+           "overview reports active controlled count");
+    expect(active_body["devices"][1]["active_control_count"] == 1,
+           "overview reports active control count");
+
+    AdminHttpResponse web_overview = db_controller.Handle(
+        {"GET", "/api/admin/overview?device_filter=web", "",
+         "cd_admin_session=" + *token});
+    expect(web_overview.status == 200,
+           "overview with web client filter returns ok");
+    auto web_body = nlohmann::json::parse(web_overview.body);
+    expect(web_body["devices"].size() == 1,
+           "overview returns web clients on web filter");
+    expect(web_body["devices"][0]["kind"] == "web",
+           "overview marks web client kind");
   }
   std::filesystem::remove(db_path);
 
