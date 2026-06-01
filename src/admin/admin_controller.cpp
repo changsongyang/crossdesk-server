@@ -456,8 +456,8 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
         row.appendChild(clientCell);
 
         const statusCell = document.createElement('td');
-        appendBadge(statusCell, device.kind === 'web' ? 'web' : (device.online ? 'online' : 'offline'),
-          device.kind === 'web' ? 'web' : (device.online ? 'online' : 'offline'));
+        appendBadge(statusCell, device.online ? 'online' : 'offline',
+          device.online ? 'online' : 'offline');
         if (activeSessions > 0) appendBadge(statusCell, 'remote', 'active');
         row.appendChild(statusCell);
 
