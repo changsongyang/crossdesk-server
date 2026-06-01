@@ -47,6 +47,15 @@ std::string ToLower(std::string value) {
   return value;
 }
 
+std::string NormalizeRemoteDeviceId(const std::string& device_id) {
+  return device_id.rfind("C-", 0) == 0 ? device_id.substr(2) : device_id;
+}
+
+std::string NormalizedRemoteDeviceExpr(const std::string& column) {
+  return "CASE WHEN " + column + " LIKE 'C-%' THEN substr(" + column +
+         ", 3) ELSE " + column + " END";
+}
+
 std::string DevicePresenceFilterClause(const std::string& filter) {
   std::string normalized = ToLower(filter);
   if (normalized == "web") {
@@ -64,8 +73,12 @@ std::string DevicePresenceFilterClause(const std::string& filter) {
     clause +=
         "AND EXISTS ("
         "SELECT 1 FROM remote_control_sessions "
-        "WHERE guest_id = device_presence.device_id "
-        "OR host_id = device_presence.device_id) ";
+        "WHERE " +
+        NormalizedRemoteDeviceExpr("guest_id") +
+        " = device_presence.device_id "
+        "OR " +
+        NormalizedRemoteDeviceExpr("host_id") +
+        " = device_presence.device_id) ";
   }
   return clause;
 }
@@ -332,17 +345,25 @@ void DeviceDBManager::InitDB() {
         cutoff +
         " - started_at)) "
         "FROM remote_control_sessions "
-        "WHERE guest_id = device_presence.device_id), 0), "
+        "WHERE " +
+        NormalizedRemoteDeviceExpr("guest_id") +
+        " = device_presence.device_id), 0), "
         "total_controlled_seconds = total_controlled_seconds + COALESCE(("
         "SELECT SUM(MAX(0, " +
         cutoff +
         " - started_at)) "
         "FROM remote_control_sessions "
-        "WHERE host_id = device_presence.device_id), 0) "
+        "WHERE " +
+        NormalizedRemoteDeviceExpr("host_id") +
+        " = device_presence.device_id), 0) "
         "WHERE EXISTS ("
         "SELECT 1 FROM remote_control_sessions "
-        "WHERE guest_id = device_presence.device_id "
-        "OR host_id = device_presence.device_id);";
+        "WHERE " +
+        NormalizedRemoteDeviceExpr("guest_id") +
+        " = device_presence.device_id "
+        "OR " +
+        NormalizedRemoteDeviceExpr("host_id") +
+        " = device_presence.device_id);";
     if (sqlite3_exec(db_, sql_finalize_remote.c_str(), nullptr, nullptr,
                      &err_msg) != SQLITE_OK) {
       std::string error = SqliteExecError(db_, err_msg);
@@ -857,7 +878,10 @@ bool DeviceDBManager::StartRemoteControlSession(
     return ok;
   };
 
-  if (!ensure_presence(host_id) || !ensure_presence(guest_id)) {
+  std::string normalized_host_id = NormalizeRemoteDeviceId(host_id);
+  std::string normalized_guest_id = NormalizeRemoteDeviceId(guest_id);
+  if (!ensure_presence(normalized_host_id) ||
+      !ensure_presence(normalized_guest_id)) {
     rollback();
     return false;
   }
@@ -967,8 +991,10 @@ bool DeviceDBManager::EndRemoteControlSession(
     return ok;
   };
 
-  if (!add_duration("total_control_seconds", guest_id, duration) ||
-      !add_duration("total_controlled_seconds", effective_host_id, duration)) {
+  if (!add_duration("total_control_seconds",
+                    NormalizeRemoteDeviceId(guest_id), duration) ||
+      !add_duration("total_controlled_seconds",
+                    NormalizeRemoteDeviceId(effective_host_id), duration)) {
     rollback();
     return false;
   }
@@ -1082,7 +1108,7 @@ OnlineDurationStats DeviceDBManager::GetOnlineDurationStats() {
     return stats;
   }
 
-  const char* sql =
+  std::string sql =
       "SELECT "
       "COALESCE(SUM(CASE WHEN online = 1 AND online_since > 0 THEN "
       "MAX(0, CAST(strftime('%s','now') AS INTEGER) - online_since) "
@@ -1094,17 +1120,22 @@ OnlineDurationStats DeviceDBManager::GetOnlineDurationStats() {
       "COALESCE(SUM(total_control_seconds + COALESCE(("
       "SELECT SUM(MAX(0, CAST(strftime('%s','now') AS INTEGER) - started_at)) "
       "FROM remote_control_sessions "
-      "WHERE guest_id = device_presence.device_id), 0)), 0), "
+      "WHERE " +
+      NormalizedRemoteDeviceExpr("guest_id") +
+      " = device_presence.device_id), 0)), 0), "
       "COALESCE(SUM(total_controlled_seconds + COALESCE(("
       "SELECT SUM(MAX(0, CAST(strftime('%s','now') AS INTEGER) - started_at)) "
       "FROM remote_control_sessions "
-      "WHERE host_id = device_presence.device_id), 0)), 0) "
+      "WHERE " +
+      NormalizedRemoteDeviceExpr("host_id") +
+      " = device_presence.device_id), 0)), 0) "
       "FROM device_presence "
       "WHERE device_id NOT LIKE 'web-%' "
       "AND device_id NOT LIKE 'C-%';";
 
   sqlite3_stmt* stmt = nullptr;
-  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+  if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &stmt, nullptr) !=
+      SQLITE_OK) {
     return stats;
   }
 
@@ -1143,12 +1174,16 @@ std::vector<OnlineDeviceInfo> DeviceDBManager::ListOnlineDevices(
       "total_control_seconds + COALESCE(("
       "SELECT SUM(MAX(0, CAST(strftime('%s','now') AS INTEGER) - started_at)) "
       "FROM remote_control_sessions "
-      "WHERE guest_id = device_presence.device_id), 0) "
+      "WHERE " +
+      NormalizedRemoteDeviceExpr("guest_id") +
+      " = device_presence.device_id), 0) "
       "AS total_control_seconds, "
       "total_controlled_seconds + COALESCE(("
       "SELECT SUM(MAX(0, CAST(strftime('%s','now') AS INTEGER) - started_at)) "
       "FROM remote_control_sessions "
-      "WHERE host_id = device_presence.device_id), 0) "
+      "WHERE " +
+      NormalizedRemoteDeviceExpr("host_id") +
+      " = device_presence.device_id), 0) "
       "AS total_controlled_seconds "
       "FROM device_presence "
       "WHERE online = 1 "
@@ -1212,25 +1247,37 @@ std::vector<OnlineDeviceInfo> DeviceDBManager::ListDevicePresence(
       "total_control_seconds + COALESCE(("
       "SELECT SUM(MAX(0, CAST(strftime('%s','now') AS INTEGER) - started_at)) "
       "FROM remote_control_sessions "
-      "WHERE guest_id = device_presence.device_id), 0) "
+      "WHERE " +
+      NormalizedRemoteDeviceExpr("guest_id") +
+      " = device_presence.device_id), 0) "
       "AS total_control_seconds, "
       "total_controlled_seconds + COALESCE(("
       "SELECT SUM(MAX(0, CAST(strftime('%s','now') AS INTEGER) - started_at)) "
       "FROM remote_control_sessions "
-      "WHERE host_id = device_presence.device_id), 0) "
+      "WHERE " +
+      NormalizedRemoteDeviceExpr("host_id") +
+      " = device_presence.device_id), 0) "
       "AS total_controlled_seconds, "
       "COALESCE(("
       "SELECT COUNT(*) FROM remote_control_sessions "
-      "WHERE guest_id = device_presence.device_id), 0) "
+      "WHERE " +
+      NormalizedRemoteDeviceExpr("guest_id") +
+      " = device_presence.device_id), 0) "
       "AS active_control_count, "
       "COALESCE(("
       "SELECT COUNT(*) FROM remote_control_sessions "
-      "WHERE host_id = device_presence.device_id), 0) "
+      "WHERE " +
+      NormalizedRemoteDeviceExpr("host_id") +
+      " = device_presence.device_id), 0) "
       "AS active_controlled_count, "
       "COALESCE(("
       "SELECT COUNT(*) FROM remote_control_sessions "
-      "WHERE guest_id = device_presence.device_id "
-      "OR host_id = device_presence.device_id), 0) "
+      "WHERE " +
+      NormalizedRemoteDeviceExpr("guest_id") +
+      " = device_presence.device_id "
+      "OR " +
+      NormalizedRemoteDeviceExpr("host_id") +
+      " = device_presence.device_id), 0) "
       "AS active_session_count "
       "FROM device_presence "
       "WHERE " +

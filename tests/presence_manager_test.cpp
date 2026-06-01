@@ -153,6 +153,21 @@ int main() {
     expect(active_devices[1].device_id == "device-2" &&
                active_devices[1].active_controlled_count == 1,
            "presence list reports active controlled count");
+    db.SetDeviceOnline("device-4", true);
+    expect(db.StartRemoteControlSession("tx-clone", "device-2", "C-device-4"),
+           "clone remote control session starts");
+    auto clone_control =
+        db.ListDevicePresence(10, 0, "device-4", "active");
+    expect(clone_control.size() == 1 &&
+               clone_control[0].active_control_count == 1,
+           "presence list maps clone guest control count to base device");
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    expect(db.EndRemoteControlSession("tx-clone", "device-2", "C-device-4"),
+           "clone remote control session ends");
+    auto clone_persisted = db.ListDevicePresence(10, 0, "device-4");
+    expect(!clone_persisted.empty() &&
+               clone_persisted[0].total_control_seconds >= 1,
+           "clone guest control duration persists on base device");
     auto guest_control = db.ListDevicePresence(10, 0, "device-1");
     auto host_controlled = db.ListDevicePresence(10, 0, "device-2");
     expect(!guest_control.empty() &&

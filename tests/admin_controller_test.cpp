@@ -115,6 +115,7 @@ int main() {
     db.SetDeviceOnline("device-admin-1", true);
     db.SetDeviceOnline("device-admin-offline", true);
     db.SetDeviceOnline("device-admin-offline", false);
+    db.SetDeviceOnline("device-admin-control", true);
     db.SetDeviceOnline("web-admin-1", true);
     db.StartRemoteControlSession("tx-admin", "device-admin-1",
                                  "device-admin-offline");
@@ -122,6 +123,8 @@ int main() {
                                "device-admin-offline");
     db.StartRemoteControlSession("tx-admin-live", "device-admin-1",
                                  "device-admin-offline");
+    db.StartRemoteControlSession("tx-admin-clone", "device-admin-1",
+                                 "C-device-admin-control");
     AdminController db_controller(&auth, nullptr, transmission, &db,
                                   [](const std::string&, nlohmann::json) {});
     AdminHttpResponse db_overview = db_controller.Handle(
@@ -184,15 +187,18 @@ int main() {
     expect(active_overview.status == 200,
            "overview with active device filter returns ok");
     auto active_body = nlohmann::json::parse(active_overview.body);
-    expect(active_body["devices_page"]["total"] == 2,
+    expect(active_body["devices_page"]["total"] == 3,
            "overview reports active device total");
-    expect(active_body["devices"].size() == 2,
+    expect(active_body["devices"].size() == 3,
            "overview returns active devices");
     expect(active_body["devices"][0]["id"] == "device-admin-1",
            "overview applies device sort order");
-    expect(active_body["devices"][0]["active_controlled_count"] == 1,
+    expect(active_body["devices"][0]["active_controlled_count"] == 2,
            "overview reports active controlled count");
-    expect(active_body["devices"][1]["active_control_count"] == 1,
+    expect(active_body["devices"][1]["id"] == "device-admin-control" &&
+               active_body["devices"][1]["active_control_count"] == 1,
+           "overview maps clone guest control count to base device");
+    expect(active_body["devices"][2]["active_control_count"] == 1,
            "overview reports active control count");
 
     AdminHttpResponse web_overview = db_controller.Handle(
