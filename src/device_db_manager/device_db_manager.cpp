@@ -166,6 +166,17 @@ void DeviceDBManager::InitDB() {
       "PRIMARY KEY (transmission_id, guest_id)"
       ");";
 
+  const char* sql_server_runtime =
+      "CREATE TABLE IF NOT EXISTS server_runtime ("
+      "id INTEGER PRIMARY KEY CHECK(id = 1),"
+      "last_seen_at INTEGER NOT NULL DEFAULT 0"
+      ");";
+
+  const char* sql_server_runtime_init =
+      "INSERT INTO server_runtime (id, last_seen_at) "
+      "SELECT 1, 0 WHERE NOT EXISTS "
+      "(SELECT 1 FROM server_runtime WHERE id = 1);";
+
   char* err_msg = nullptr;
 
   if (sqlite3_exec(db_, sql_devices, nullptr, nullptr, &err_msg) != SQLITE_OK) {
@@ -232,6 +243,55 @@ void DeviceDBManager::InitDB() {
                              error);
   }
 
+  if (sqlite3_exec(db_, sql_server_runtime, nullptr, nullptr, &err_msg) !=
+      SQLITE_OK) {
+    std::string error = SqliteExecError(db_, err_msg);
+    LOG_ERROR("Failed to create server_runtime table: {}", error);
+    sqlite3_free(err_msg);
+    throw std::runtime_error("Failed to create server_runtime table: " +
+                             error);
+  }
+
+  if (sqlite3_exec(db_, sql_server_runtime_init, nullptr, nullptr,
+                   &err_msg) != SQLITE_OK) {
+    std::string error = SqliteExecError(db_, err_msg);
+    LOG_ERROR("Failed to initialize server_runtime: {}", error);
+    sqlite3_free(err_msg);
+    throw std::runtime_error("Failed to initialize server_runtime: " + error);
+  }
+
+  int64_t stale_cutoff = std::min(GetRuntimeLastSeen(), NowSeconds());
+  if (stale_cutoff > 0) {
+    std::string cutoff = std::to_string(stale_cutoff);
+    std::string sql_finalize_remote =
+        "UPDATE device_presence SET "
+        "total_control_seconds = total_control_seconds + COALESCE(("
+        "SELECT SUM(MAX(0, " +
+        cutoff +
+        " - started_at)) "
+        "FROM remote_control_sessions "
+        "WHERE guest_id = device_presence.device_id), 0), "
+        "total_controlled_seconds = total_controlled_seconds + COALESCE(("
+        "SELECT SUM(MAX(0, " +
+        cutoff +
+        " - started_at)) "
+        "FROM remote_control_sessions "
+        "WHERE host_id = device_presence.device_id), 0) "
+        "WHERE EXISTS ("
+        "SELECT 1 FROM remote_control_sessions "
+        "WHERE guest_id = device_presence.device_id "
+        "OR host_id = device_presence.device_id);";
+    if (sqlite3_exec(db_, sql_finalize_remote.c_str(), nullptr, nullptr,
+                     &err_msg) != SQLITE_OK) {
+      std::string error = SqliteExecError(db_, err_msg);
+      LOG_ERROR("Failed to finalize stale remote control sessions: {}",
+                error);
+      sqlite3_free(err_msg);
+      throw std::runtime_error(
+          "Failed to finalize stale remote control sessions: " + error);
+    }
+  }
+
   if (sqlite3_exec(db_, "DELETE FROM remote_control_sessions;", nullptr,
                    nullptr, &err_msg) != SQLITE_OK) {
     std::string error = SqliteExecError(db_, err_msg);
@@ -239,6 +299,36 @@ void DeviceDBManager::InitDB() {
     sqlite3_free(err_msg);
     throw std::runtime_error("Failed to clear remote_control_sessions: " +
                              error);
+  }
+
+  int64_t offline_time = stale_cutoff > 0 ? stale_cutoff : NowSeconds();
+  std::string sql_presence_startup_reset = "UPDATE device_presence SET ";
+  if (stale_cutoff > 0) {
+    std::string cutoff = std::to_string(stale_cutoff);
+    sql_presence_startup_reset +=
+        "total_online_seconds = total_online_seconds + "
+        "CASE WHEN online_since > 0 THEN MAX(0, " +
+        cutoff +
+        " - online_since) ELSE 0 END, ";
+  }
+  sql_presence_startup_reset +=
+      "online = 0, "
+      "updated_at = " +
+      std::to_string(offline_time) +
+      ", "
+      "online_since = 0 "
+      "WHERE online = 1;";
+  if (sqlite3_exec(db_, sql_presence_startup_reset.c_str(), nullptr, nullptr,
+                   &err_msg) != SQLITE_OK) {
+    std::string error = SqliteExecError(db_, err_msg);
+    LOG_ERROR("Failed to reset stale device presence: {}", error);
+    sqlite3_free(err_msg);
+    throw std::runtime_error("Failed to reset stale device presence: " +
+                             error);
+  }
+
+  if (!RecordRuntimeHeartbeat()) {
+    throw std::runtime_error("Failed to record runtime heartbeat");
   }
 }
 
@@ -569,6 +659,49 @@ bool DeviceDBManager::RemoveDevice(const std::string& device_id) {
   bool success = (sqlite3_step(stmt) == SQLITE_DONE);
   sqlite3_finalize(stmt);
   return success;
+}
+
+int64_t DeviceDBManager::GetRuntimeLastSeen() {
+  std::lock_guard<std::recursive_mutex> lock(db_mutex_);
+  if (db_ == nullptr) {
+    LOG_ERROR("Database is not initialized in GetRuntimeLastSeen.");
+    return 0;
+  }
+
+  const char* sql = "SELECT last_seen_at FROM server_runtime WHERE id = 1;";
+  sqlite3_stmt* stmt = nullptr;
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    return 0;
+  }
+
+  int64_t last_seen_at = 0;
+  if (sqlite3_step(stmt) == SQLITE_ROW) {
+    last_seen_at = sqlite3_column_int64(stmt, 0);
+  }
+  sqlite3_finalize(stmt);
+  return last_seen_at;
+}
+
+bool DeviceDBManager::RecordRuntimeHeartbeat() {
+  std::lock_guard<std::recursive_mutex> lock(db_mutex_);
+  if (db_ == nullptr) {
+    LOG_ERROR("Database is not initialized in RecordRuntimeHeartbeat.");
+    return false;
+  }
+
+  std::string now = std::to_string(NowSeconds());
+  std::string sql = "UPDATE server_runtime SET last_seen_at = " + now +
+                    " WHERE id = 1;";
+
+  char* err_msg = nullptr;
+  if (sqlite3_exec(db_, sql.c_str(), nullptr, nullptr, &err_msg) !=
+      SQLITE_OK) {
+    std::string error = SqliteExecError(db_, err_msg);
+    LOG_ERROR("Failed to record runtime heartbeat: {}", error);
+    sqlite3_free(err_msg);
+    return false;
+  }
+  return true;
 }
 
 bool DeviceDBManager::SetDeviceOnline(const std::string& device_id,

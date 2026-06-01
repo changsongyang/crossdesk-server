@@ -62,6 +62,9 @@ int main() {
                           .time_since_epoch()
                           .count()) +
        ".db");
+  int64_t total_online_before_restart = 0;
+  int64_t total_control_before_restart = 0;
+  int64_t total_controlled_before_restart = 0;
   {
     DeviceDBManager db(db_path.string());
     db.SetDeviceOnline("device-1", true);
@@ -149,6 +152,42 @@ int main() {
            "stats persist total control duration");
     expect(remote_stats.total_controlled_seconds >= 1,
            "stats persist total controlled duration");
+    expect(db.StartRemoteControlSession("tx-stale", "device-2", "device-3"),
+           "stale remote control session starts before restart");
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    auto restart_checkpoint_stats = db.GetOnlineDurationStats();
+    total_online_before_restart =
+        restart_checkpoint_stats.total_online_seconds;
+    total_control_before_restart =
+        restart_checkpoint_stats.total_control_seconds;
+    total_controlled_before_restart =
+        restart_checkpoint_stats.total_controlled_seconds;
+    expect(db.RecordRuntimeHeartbeat(),
+           "database records runtime heartbeat before restart");
+  }
+  {
+    DeviceDBManager restarted_db(db_path.string());
+    expect(restarted_db.CountOnlineDevices() == 0,
+           "database clears stale online devices on restart");
+    auto restarted_stats = restarted_db.GetOnlineDurationStats();
+    expect(restarted_stats.current_online_seconds == 0,
+           "database clears stale current online duration on restart");
+    expect(restarted_stats.total_online_seconds >=
+               total_online_before_restart,
+           "database preserves total online duration across restart");
+    expect(restarted_stats.total_control_seconds >=
+               total_control_before_restart,
+           "database preserves total control duration across restart");
+    expect(restarted_stats.total_controlled_seconds >=
+               total_controlled_before_restart,
+           "database preserves total controlled duration across restart");
+    auto restarted_devices =
+        restarted_db.ListDevicePresence(10, 0, "device-2");
+    expect(!restarted_devices.empty() && !restarted_devices[0].online,
+           "restart marks previously online device offline");
+    expect(!restarted_devices.empty() &&
+               restarted_devices[0].online_since == 0,
+           "restart clears stale online_since");
   }
   std::filesystem::remove(db_path);
 

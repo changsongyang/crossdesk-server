@@ -10,6 +10,8 @@
 
 namespace {
 
+constexpr long kRuntimeHeartbeatIntervalMs = 5000;
+
 void SetJsonResponse(server::connection_ptr con,
                      websocketpp::http::status_code::value status,
                      const json& body) {
@@ -308,6 +310,20 @@ bool SignalServer::OnPong(websocketpp::connection_hdl hdl, std::string s) {
   return true;
 }
 
+void SignalServer::ScheduleRuntimeHeartbeat() {
+  server_.set_timer(
+      kRuntimeHeartbeatIntervalMs,
+      [this](websocketpp::lib::error_code const& ec) {
+        if (ec) {
+          return;
+        }
+        if (device_db_manager_) {
+          device_db_manager_->RecordRuntimeHeartbeat();
+        }
+        ScheduleRuntimeHeartbeat();
+      });
+}
+
 void SignalServer::Run() {
   if (!std::filesystem::exists(certs_dir_)) {
     std::string message = "Certs dir [" + certs_dir_ + "] does not exist";
@@ -356,6 +372,11 @@ void SignalServer::Run() {
   }
   LOG_INFO("Signal server listening on port [{}], waiting for connections...",
            port_);
+
+  if (device_db_manager_) {
+    device_db_manager_->RecordRuntimeHeartbeat();
+  }
+  ScheduleRuntimeHeartbeat();
 
   try {
     server_.run();

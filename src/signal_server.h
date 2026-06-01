@@ -48,6 +48,8 @@ class SignalServer {
   void OnMessage(websocketpp::connection_hdl hdl, server::message_ptr msg);
 
  private:
+  void ScheduleRuntimeHeartbeat();
+
   server server_;
   uint16_t port_ = 9090;
   std::string certs_dir_ = "/var/lib/crossdesk/certs";

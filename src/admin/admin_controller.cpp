@@ -452,12 +452,12 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
       document.getElementById('metric-devices').textContent = stats.online_device_count;
       document.getElementById('metric-web').textContent = stats.online_web_client_count;
       document.getElementById('metric-sessions').textContent = stats.active_connection_count;
-      document.getElementById('metric-duration').textContent = formatDuration(stats.online_duration_seconds);
+      document.getElementById('metric-duration').textContent = formatDuration(stats.total_online_seconds);
       document.getElementById('metric-control').textContent = formatDuration(stats.total_control_seconds);
       document.getElementById('metric-controlled').textContent = formatDuration(stats.total_controlled_seconds);
       document.getElementById('last-refresh').textContent = new Date().toLocaleTimeString();
       statsSnapshot = {
-        onlineDuration: Number(stats.online_duration_seconds) || 0,
+        onlineDuration: Number(stats.total_online_seconds) || 0,
         onlineCount: Number(stats.online_device_count) || 0,
         controlDuration: Number(stats.total_control_seconds) || 0,
         controlledDuration: Number(stats.total_controlled_seconds) || 0,

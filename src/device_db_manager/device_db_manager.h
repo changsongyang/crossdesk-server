@@ -57,6 +57,7 @@ class DeviceDBManager {
   bool RemoveDevice(const std::string& device_id);
 
   bool SetDeviceOnline(const std::string& device_id, bool online);
+  bool RecordRuntimeHeartbeat();
   bool StartRemoteControlSession(const std::string& transmission_id,
                                  const std::string& host_id,
                                  const std::string& guest_id);
@@ -85,6 +86,7 @@ class DeviceDBManager {
   std::string GeneratePassword();
   std::string GenerateSalt();
   bool DeviceIdExists(const std::string& device_id);
+  int64_t GetRuntimeLastSeen();
 
   std::string HashPasswordWithSalt(const std::string& salt,
                                    const std::string& password);
