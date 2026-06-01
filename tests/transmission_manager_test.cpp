@@ -1,6 +1,7 @@
 #include "transmission_manager.h"
 
 #include <iostream>
+#include <memory>
 #include <string>
 
 int main() {
@@ -16,6 +17,11 @@ int main() {
 
   expect(transmission.GetActiveConnectionCount() == 0,
          "initial active connection count is zero");
+
+  expect(!transmission.BindGuestToTransmission("orphan-guest", "missing-host"),
+         "guest cannot join a missing host transmission");
+  expect(transmission.GetActiveConnectionCount() == 0,
+         "missing host join is ignored by active connection count");
 
   expect(transmission.BindHostToTransmission("B", "B"),
          "host B binds to transmission B");
@@ -64,6 +70,62 @@ int main() {
   expect(transmission.ReleaseTransmission("B"), "host B releases transmission B");
   expect(transmission.GetActiveConnectionCount() == 0,
          "host close does not decrement an already released guest count");
+
+  {
+    TransmissionManager session_transmission;
+    auto guest_connection = std::make_shared<int>(1);
+    websocketpp::connection_hdl guest_hdl(guest_connection);
+
+    expect(session_transmission.BindUserToWsHandle("guest-A", guest_hdl),
+           "guest A binds to websocket handle");
+    expect(session_transmission.BindHostToTransmission("guest-A", "guest-A"),
+           "guest A has its own host transmission");
+    expect(session_transmission.BindHostToTransmission("host-B", "host-B"),
+           "host B has its own host transmission");
+    expect(session_transmission.BindGuestToTransmission("guest-A", "host-B"),
+           "guest A joins host B transmission");
+    expect(session_transmission.GetActiveConnectionCount() == 1,
+           "host B has one guest connection");
+
+    expect(session_transmission.ReleaseUserSession(guest_hdl) == "guest-A",
+           "guest A websocket session releases");
+    expect(session_transmission.GetActiveConnectionCount() == 0,
+           "guest disconnect removes host-side guest connection");
+
+    auto remaining = session_transmission.GetTransmissionSnapshots();
+    expect(remaining.size() == 1 && remaining[0].transmission_id == "host-B",
+           "guest A own host transmission is released");
+    expect(remaining.size() == 1 && remaining[0].guest_ids.empty(),
+           "host B no longer lists disconnected guest A");
+  }
+
+  {
+    TransmissionManager duplicate_transmission;
+    auto first_connection = std::make_shared<int>(1);
+    auto second_connection = std::make_shared<int>(2);
+    websocketpp::connection_hdl first_hdl(first_connection);
+    websocketpp::connection_hdl second_hdl(second_connection);
+
+    expect(duplicate_transmission.BindUserToWsHandle("device-1", first_hdl),
+           "device binds first websocket handle");
+    expect(duplicate_transmission.BindHostToTransmission("device-1", "device-1"),
+           "device has a host transmission");
+    expect(duplicate_transmission.BindUserToWsHandle("device-1", second_hdl),
+           "device binds second websocket handle");
+
+    expect(duplicate_transmission.ReleaseUserSession(second_hdl).empty(),
+           "closing one duplicate websocket does not log out device");
+    expect(duplicate_transmission.IsTransmissionExist("device-1"),
+           "device host transmission remains while another websocket is alive");
+    expect(duplicate_transmission.GetUserId(
+               duplicate_transmission.GetWsHandle("device-1")) == "device-1",
+           "device websocket handle falls back to remaining connection");
+
+    expect(duplicate_transmission.ReleaseUserSession(first_hdl) == "device-1",
+           "closing final duplicate websocket logs out device");
+    expect(!duplicate_transmission.IsTransmissionExist("device-1"),
+           "device host transmission is released after final websocket closes");
+  }
 
   {
     TransmissionManager paged_transmission;

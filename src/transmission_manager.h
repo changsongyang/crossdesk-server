@@ -74,6 +74,9 @@ class TransmissionManager {
   std::map<std::string, std::string> transmission_host_id_list_;
   std::map<std::string, std::vector<std::string>> transmission_guest_id_list_;
   std::map<std::string, websocketpp::connection_hdl> user_id_ws_hdl_list_;
+  std::map<websocketpp::connection_hdl, std::string,
+           std::owner_less<websocketpp::connection_hdl>>
+      ws_hdl_user_id_list_;
   std::map<websocketpp::connection_hdl, uint32_t,
            std::owner_less<websocketpp::connection_hdl>>
       ws_hdl_last_active_time_map_;
@@ -82,7 +85,6 @@ class TransmissionManager {
   std::recursive_mutex ws_hdl_alive_checker_mutex_;
   std::condition_variable_any ws_hdl_alive_checker_cv_;
   std::atomic<bool> exit_alive_checker_{false};
-  std::atomic<size_t> active_connection_count_{0};
 };
 
 #endif

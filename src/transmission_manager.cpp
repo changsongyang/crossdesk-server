@@ -25,14 +25,19 @@ bool SameConnection(websocketpp::connection_hdl lhs,
   return !less(lhs, rhs) && !less(rhs, lhs);
 }
 
-void SubtractActiveConnectionCount(std::atomic<size_t>& count,
-                                   size_t amount) {
-  size_t current = count.load();
-  count.store(amount > current ? 0 : current - amount);
-}
-
 bool ContainsText(const std::string& value, const std::string& search) {
   return value.find(search) != std::string::npos;
+}
+
+bool HasUserConnection(
+    const std::map<websocketpp::connection_hdl, std::string,
+                   std::owner_less<websocketpp::connection_hdl>>&
+        ws_hdl_user_id_list,
+    const std::string& user_id) {
+  return std::any_of(ws_hdl_user_id_list.begin(), ws_hdl_user_id_list.end(),
+                     [&user_id](const auto& pair) {
+                       return pair.second == user_id;
+                     });
 }
 
 bool TransmissionMatchesSearch(const std::string& transmission_id,
@@ -79,8 +84,6 @@ bool TransmissionManager::ReleaseTransmission(
   std::lock_guard<std::recursive_mutex> lock(ws_hdl_alive_checker_mutex_);
   auto guest_it = transmission_guest_id_list_.find(transmission_id);
   if (guest_it != transmission_guest_id_list_.end()) {
-    SubtractActiveConnectionCount(active_connection_count_,
-                                  guest_it->second.size());
     transmission_guest_id_list_.erase(guest_it);
   }
   transmission_host_id_list_.erase(transmission_id);
@@ -208,8 +211,11 @@ bool TransmissionManager::BindGuestToTransmission(
     const std::string& guest_id, const std::string& transmission_id) {
   std::lock_guard<std::recursive_mutex> lock(ws_hdl_alive_checker_mutex_);
   auto host_it = transmission_host_id_list_.find(transmission_id);
-  if (host_it != transmission_host_id_list_.end() &&
-      host_it->second == guest_id) {
+  if (host_it == transmission_host_id_list_.end()) {
+    LOG_WARN("Transmission [{}] does not exist", transmission_id);
+    return false;
+  }
+  if (host_it->second == guest_id) {
     return false;
   }
 
@@ -218,7 +224,6 @@ bool TransmissionManager::BindGuestToTransmission(
     return false;
   }
   guests.push_back(guest_id);
-  ++active_connection_count_;
   LOG_INFO("Bind guest [{}] to transmission [{}]", guest_id, transmission_id);
   return true;
 }
@@ -227,26 +232,32 @@ bool TransmissionManager::BindUserToWsHandle(const std::string& user_id,
                                              websocketpp::connection_hdl hdl) {
   std::lock_guard<std::recursive_mutex> lock(ws_hdl_alive_checker_mutex_);
   user_id_ws_hdl_list_[user_id] = hdl;
+  ws_hdl_user_id_list_[hdl] = user_id;
   return true;
 }
 
 bool TransmissionManager::ReleaseGuestFromTransmission(
     const std::string& guest_id) {
   std::lock_guard<std::recursive_mutex> lock(ws_hdl_alive_checker_mutex_);
+  bool released = false;
   for (auto map_it = transmission_guest_id_list_.begin();
-       map_it != transmission_guest_id_list_.end(); ++map_it) {
+       map_it != transmission_guest_id_list_.end();) {
     auto& list = map_it->second;
-    auto it = std::find(list.begin(), list.end(), guest_id);
-    if (it != list.end()) {
-      list.erase(it);
-      SubtractActiveConnectionCount(active_connection_count_, 1);
-      if (list.empty()) {
-        transmission_guest_id_list_.erase(map_it);
-      }
-      return true;
+    auto remove_begin = std::remove(list.begin(), list.end(), guest_id);
+    if (remove_begin == list.end()) {
+      ++map_it;
+      continue;
+    }
+
+    list.erase(remove_begin, list.end());
+    released = true;
+    if (list.empty()) {
+      map_it = transmission_guest_id_list_.erase(map_it);
+    } else {
+      ++map_it;
     }
   }
-  return false;
+  return released;
 }
 
 bool TransmissionManager::DisconnectTransmission(
@@ -266,6 +277,14 @@ std::string TransmissionManager::ReleaseUserSession(
     return "";
   }
 
+  if (HasUserConnection(ws_hdl_user_id_list_, user_id)) {
+    return "";
+  }
+
+  if (ReleaseGuestFromTransmission(user_id)) {
+    LOG_INFO("Guest [{}] disconnected, releasing it from transmission", user_id);
+  }
+
   std::string transmission_id = IsHost(user_id);
   if (!transmission_id.empty()) {
     LOG_INFO("Host [{}] disconnected, releasing transmission [{}]", user_id,
@@ -274,24 +293,36 @@ std::string TransmissionManager::ReleaseUserSession(
     return user_id;
   }
 
-  if (ReleaseGuestFromTransmission(user_id)) {
-    LOG_INFO("Guest [{}] disconnected, releasing it from transmission", user_id);
-  }
   return user_id;
 }
 
 std::string TransmissionManager::ReleaseUserFromWsHandle(
     websocketpp::connection_hdl hdl) {
   std::lock_guard<std::recursive_mutex> lock(ws_hdl_alive_checker_mutex_);
-  for (auto it = user_id_ws_hdl_list_.begin(); it != user_id_ws_hdl_list_.end();
-       ++it) {
-    if (SameConnection(it->second, hdl)) {
-      std::string user_id = it->first;
-      user_id_ws_hdl_list_.erase(it);
-      return user_id;
+  auto hdl_it = ws_hdl_user_id_list_.find(hdl);
+  if (hdl_it == ws_hdl_user_id_list_.end()) {
+    return "";
+  }
+
+  std::string user_id = hdl_it->second;
+  ws_hdl_user_id_list_.erase(hdl_it);
+
+  auto user_it = user_id_ws_hdl_list_.find(user_id);
+  if (user_it != user_id_ws_hdl_list_.end() &&
+      SameConnection(user_it->second, hdl)) {
+    bool reassigned = false;
+    for (const auto& pair : ws_hdl_user_id_list_) {
+      if (pair.second == user_id) {
+        user_it->second = pair.first;
+        reassigned = true;
+        break;
+      }
+    }
+    if (!reassigned) {
+      user_id_ws_hdl_list_.erase(user_it);
     }
   }
-  return "";
+  return user_id;
 }
 
 void TransmissionManager::RemoveWsHandleLastActiveTime(
@@ -313,8 +344,9 @@ websocketpp::connection_hdl TransmissionManager::GetWsHandle(
 
 std::string TransmissionManager::GetUserId(websocketpp::connection_hdl hdl) {
   std::lock_guard<std::recursive_mutex> lock(ws_hdl_alive_checker_mutex_);
-  for (const auto& pair : user_id_ws_hdl_list_) {
-    if (SameConnection(pair.second, hdl)) return pair.first;
+  auto it = ws_hdl_user_id_list_.find(hdl);
+  if (it != ws_hdl_user_id_list_.end()) {
+    return it->second;
   }
   return "";
 }
@@ -330,7 +362,15 @@ int TransmissionManager::UpdateWsHandleLastActiveTime(
 }
 
 size_t TransmissionManager::GetActiveConnectionCount() {
-  return active_connection_count_.load();
+  std::lock_guard<std::recursive_mutex> lock(ws_hdl_alive_checker_mutex_);
+  size_t count = 0;
+  for (const auto& host_pair : transmission_host_id_list_) {
+    auto guest_it = transmission_guest_id_list_.find(host_pair.first);
+    if (guest_it != transmission_guest_id_list_.end()) {
+      count += guest_it->second.size();
+    }
+  }
+  return count;
 }
 
 void TransmissionManager::AliveChecker() {
