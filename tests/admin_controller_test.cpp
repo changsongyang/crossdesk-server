@@ -21,6 +21,8 @@ int main() {
   expect(AdminController::IsAdminRoute("/admin"), "/admin is admin route");
   expect(AdminController::IsAdminRoute("/api/admin/overview"),
          "/api/admin/overview is admin route");
+  expect(AdminController::IsAdminRoute("/api/admin/overview?session_limit=1"),
+         "/api/admin/overview with query is admin route");
   expect(!AdminController::IsAdminRoute("/api/stats"),
          "/api/stats is not admin route");
   expect(!AdminController::IsAdminRoute("/api/adminx"),
@@ -29,6 +31,9 @@ int main() {
   expect(AdminController::ExtractDisconnectTransmissionId(
              "/api/admin/sessions/100284391/disconnect") == "100284391",
          "disconnect route extracts transmission id");
+  expect(AdminController::ExtractDisconnectTransmissionId(
+             "/api/admin/sessions/100284391/disconnect?x=1") == "100284391",
+         "disconnect route extracts transmission id with query");
   expect(AdminController::ExtractDisconnectTransmissionId(
              "/api/admin/sessions/100284391") == "",
          "non-disconnect route does not extract id");
@@ -77,6 +82,23 @@ int main() {
   transmission->BindHostToTransmission("host-1", "host-1");
   transmission->BindGuestToTransmission("guest-1", "host-1");
   auto token = auth.Login("admin", "secret");
+  AdminHttpResponse overview = controller.Handle(
+      {"GET",
+       "/api/admin/overview?session_limit=1&session_offset=0&session_search=guest-1",
+       "", "cd_admin_session=" + *token});
+  expect(overview.status == 200, "overview with pagination returns ok");
+  auto overview_body = nlohmann::json::parse(overview.body);
+  expect(overview_body["sessions"].size() == 1,
+         "overview applies session pagination");
+  expect(overview_body["sessions_page"]["total"] == 1,
+         "overview reports filtered session total");
+  AdminHttpResponse stats = controller.Handle(
+      {"GET", "/api/admin/stats", "", "cd_admin_session=" + *token});
+  expect(stats.status == 200, "stats returns ok");
+  auto stats_body = nlohmann::json::parse(stats.body);
+  expect(stats_body["stats"]["active_connection_count"] == 1,
+         "stats reports active connection count");
+
   AdminHttpResponse disconnect = controller.Handle(
       {"POST", "/api/admin/sessions/host-1/disconnect", "",
        "cd_admin_session=" + *token});

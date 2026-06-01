@@ -193,4 +193,4 @@ After startup, open:
 https://your-domain.example.com:9090/admin
 ```
 
-The dashboard shows online devices, online web clients, and active remote-control sessions. Its disconnect action only disconnects the selected remote-control session; it does not kick devices offline, delete devices, or change device credentials.
+The dashboard shows online devices, online web clients, and active remote-control sessions, and supports disconnecting a selected remote-control session.

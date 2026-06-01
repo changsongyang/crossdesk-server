@@ -77,6 +77,20 @@ int main() {
            "online device list marks device online");
     expect(online_devices[0].updated_at > 0,
            "online device list includes updated_at");
+    db.SetDeviceOnline("device-2", true);
+    db.SetDeviceOnline("device-3", true);
+    expect(db.CountOnlineDevices() == 3,
+           "database online device count includes regular devices");
+    expect(db.ListOnlineDevices(2, 0, "").size() == 2,
+           "online device list supports page limit");
+    expect(db.ListOnlineDevices(2, 2, "").size() == 1,
+           "online device list supports page offset");
+    auto filtered_devices = db.ListOnlineDevices(10, 0, "device-2");
+    expect(db.CountOnlineDevices("device-2") == 1,
+           "online device count supports search");
+    expect(filtered_devices.size() == 1 &&
+               filtered_devices[0].device_id == "device-2",
+           "online device list supports search");
   }
   std::filesystem::remove(db_path);
 

@@ -9,6 +9,7 @@
 
 #include <sqlite3.h>
 
+#include <cstddef>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -44,7 +45,10 @@ class DeviceDBManager {
 
   bool SetDeviceOnline(const std::string& device_id, bool online);
   int GetOnlineDeviceCount();
+  int CountOnlineDevices(const std::string& search = "");
   std::vector<OnlineDeviceInfo> ListOnlineDevices();
+  std::vector<OnlineDeviceInfo> ListOnlineDevices(
+      size_t limit, size_t offset, const std::string& search);
   std::vector<std::pair<std::string, bool>> BatchQueryOnline(
       const std::vector<std::string>& device_ids);
   bool SetUserDevices(const std::string& user_id,

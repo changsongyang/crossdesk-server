@@ -1,12 +1,123 @@
 #include "admin_controller.h"
 
 #include <algorithm>
+#include <cctype>
+#include <map>
+#include <string>
 
 namespace {
 
 constexpr char kSessionCookieName[] = "cd_admin_session";
 constexpr char kDisconnectPrefix[] = "/api/admin/sessions/";
 constexpr char kDisconnectSuffix[] = "/disconnect";
+constexpr size_t kDefaultPageLimit = 50;
+constexpr size_t kMaxPageLimit = 200;
+
+std::string ResourcePath(const std::string& resource) {
+  size_t query_pos = resource.find('?');
+  return query_pos == std::string::npos ? resource
+                                        : resource.substr(0, query_pos);
+}
+
+std::string ResourceQuery(const std::string& resource) {
+  size_t query_pos = resource.find('?');
+  return query_pos == std::string::npos ? "" : resource.substr(query_pos + 1);
+}
+
+int HexValue(char ch) {
+  if (ch >= '0' && ch <= '9') return ch - '0';
+  if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
+  if (ch >= 'A' && ch <= 'F') return ch - 'A' + 10;
+  return -1;
+}
+
+std::string UrlDecode(const std::string& value) {
+  std::string decoded;
+  decoded.reserve(value.size());
+  for (size_t i = 0; i < value.size(); ++i) {
+    char ch = value[i];
+    if (ch == '+') {
+      decoded.push_back(' ');
+    } else if (ch == '%' && i + 2 < value.size()) {
+      int hi = HexValue(value[i + 1]);
+      int lo = HexValue(value[i + 2]);
+      if (hi >= 0 && lo >= 0) {
+        decoded.push_back(static_cast<char>((hi << 4) | lo));
+        i += 2;
+      } else {
+        decoded.push_back(ch);
+      }
+    } else {
+      decoded.push_back(ch);
+    }
+  }
+  return decoded;
+}
+
+std::map<std::string, std::string> ParseQueryParams(
+    const std::string& query_string) {
+  std::map<std::string, std::string> params;
+  size_t start = 0;
+  while (start <= query_string.size()) {
+    size_t end = query_string.find('&', start);
+    std::string item =
+        query_string.substr(start, end == std::string::npos
+                                       ? std::string::npos
+                                       : end - start);
+    if (!item.empty()) {
+      size_t equals = item.find('=');
+      std::string key = UrlDecode(item.substr(0, equals));
+      std::string value = equals == std::string::npos
+                              ? ""
+                              : UrlDecode(item.substr(equals + 1));
+      params[key] = value;
+    }
+    if (end == std::string::npos) {
+      break;
+    }
+    start = end + 1;
+  }
+  return params;
+}
+
+bool ParseSize(const std::string& value, size_t* result) {
+  if (value.empty()) {
+    return false;
+  }
+  size_t parsed = 0;
+  for (unsigned char ch : value) {
+    if (!std::isdigit(ch)) {
+      return false;
+    }
+    size_t digit = static_cast<size_t>(ch - '0');
+    if (parsed > (static_cast<size_t>(-1) - digit) / 10) {
+      return false;
+    }
+    parsed = parsed * 10 + digit;
+  }
+  *result = parsed;
+  return true;
+}
+
+size_t QuerySizeParam(const std::map<std::string, std::string>& params,
+                      const std::string& key, size_t fallback,
+                      size_t max_value) {
+  auto it = params.find(key);
+  if (it == params.end()) {
+    return fallback;
+  }
+  size_t value = 0;
+  if (!ParseSize(it->second, &value)) {
+    return fallback;
+  }
+  return std::min(value, max_value);
+}
+
+std::string QueryStringParam(const std::map<std::string, std::string>& params,
+                             const std::string& key) {
+  auto it = params.find(key);
+  return it == params.end() ? "" : it->second;
+}
 
 const char kAdminHtml[] = R"HTML(<!doctype html>
 <html lang="en">
@@ -34,14 +145,19 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
     .metric strong { display: block; font-size: 30px; margin-top: 6px; }
     .grid { display: grid; grid-template-columns: 1.1fr .9fr; gap: 18px; align-items: start; }
     .toolbar { display: flex; gap: 10px; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .toolbar h2 { font-size: 18px; margin: 0; }
+    .actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
+    select { border: 1px solid #b8c2cc; border-radius: 6px; padding: 9px 10px; background: #ffffff; }
     table { width: 100%; border-collapse: collapse; font-size: 14px; }
     th, td { border-bottom: 1px solid #edf0f3; padding: 10px 8px; text-align: left; vertical-align: top; }
     th { color: #667085; font-weight: 600; }
+    .pager { display: flex; gap: 8px; align-items: center; justify-content: flex-end; margin-top: 12px; color: #667085; font-size: 13px; flex-wrap: wrap; }
     .status { color: #067647; font-weight: 600; }
     .muted { color: #667085; }
     .error { color: #b42318; min-height: 20px; }
+    .empty { color: #667085; text-align: center; padding: 16px 8px; }
     .hidden { display: none; }
-    @media (max-width: 860px) { .metrics, .grid { grid-template-columns: 1fr; } header { padding: 12px 16px; } main { padding: 16px; } }
+    @media (max-width: 860px) { .metrics, .grid { grid-template-columns: 1fr; } header { padding: 12px 16px; } main { padding: 16px; } .toolbar { align-items: stretch; flex-direction: column; } .actions { justify-content: flex-start; } }
   </style>
 </head>
 <body>
@@ -62,7 +178,10 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
     <section id="dashboard-view" class="hidden">
       <div class="toolbar">
         <div class="muted">Last refresh: <span id="last-refresh">never</span></div>
-        <div id="refresh-error" class="error"></div>
+        <div class="actions">
+          <button id="list-refresh" type="button">Refresh lists</button>
+          <div id="refresh-error" class="error"></div>
+        </div>
       </div>
       <div class="metrics">
         <div class="metric"><span>Online devices</span><strong id="metric-devices">0</strong></div>
@@ -73,19 +192,46 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
         <section class="panel">
           <div class="toolbar">
             <h2>Online Devices</h2>
-            <input id="device-search" placeholder="Search device ID">
+            <div class="actions">
+              <input id="device-search" placeholder="Search device ID">
+              <select id="device-limit" aria-label="Devices per page">
+                <option value="50">50 / page</option>
+                <option value="100">100 / page</option>
+                <option value="200">200 / page</option>
+              </select>
+            </div>
           </div>
           <table>
             <thead><tr><th>Device ID</th><th>Status</th><th>Updated</th></tr></thead>
             <tbody id="devices"></tbody>
           </table>
+          <div class="pager">
+            <button id="device-prev" type="button">Previous</button>
+            <span id="device-page-info">0-0 of 0</span>
+            <button id="device-next" type="button">Next</button>
+          </div>
         </section>
         <section class="panel">
-          <h2>Active Sessions</h2>
+          <div class="toolbar">
+            <h2>Active Sessions</h2>
+            <div class="actions">
+              <input id="session-search" placeholder="Search session or user">
+              <select id="session-limit" aria-label="Sessions per page">
+                <option value="50">50 / page</option>
+                <option value="100">100 / page</option>
+                <option value="200">200 / page</option>
+              </select>
+            </div>
+          </div>
           <table>
             <thead><tr><th>Transmission</th><th>Participants</th><th>Action</th></tr></thead>
             <tbody id="sessions"></tbody>
           </table>
+          <div class="pager">
+            <button id="session-prev" type="button">Previous</button>
+            <span id="session-page-info">0-0 of 0</span>
+            <button id="session-next" type="button">Next</button>
+          </div>
         </section>
       </div>
     </section>
@@ -94,23 +240,29 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
     const loginView = document.getElementById('login-view');
     const dashboardView = document.getElementById('dashboard-view');
     const logoutButton = document.getElementById('logout');
-    let devices = [];
-    let timer = null;
+    const state = {
+      devices: {limit: 50, offset: 0, total: 0, search: ''},
+      sessions: {limit: 50, offset: 0, total: 0, search: ''}
+    };
+    const searchTimers = {devices: null, sessions: null};
+    let statsTimer = null;
+    let listRefreshSerial = 0;
 
     function showDashboard() {
       loginView.classList.add('hidden');
       dashboardView.classList.remove('hidden');
       logoutButton.classList.remove('hidden');
-      refresh();
-      if (!timer) timer = setInterval(refresh, 5000);
+      refreshStats();
+      refreshLists();
+      if (!statsTimer) statsTimer = setInterval(refreshStats, 5000);
     }
 
     function showLogin(message) {
       dashboardView.classList.add('hidden');
       loginView.classList.remove('hidden');
       logoutButton.classList.add('hidden');
-      if (timer) clearInterval(timer);
-      timer = null;
+      if (statsTimer) clearInterval(statsTimer);
+      statsTimer = null;
       document.getElementById('login-error').textContent = message || '';
     }
 
@@ -140,33 +292,122 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
       return new Date(value * 1000).toLocaleString();
     }
 
-    function renderDevices() {
-      const query = document.getElementById('device-search').value.trim();
+    function appendEmptyRow(body, colSpan) {
+      const row = document.createElement('tr');
+      const cell = document.createElement('td');
+      cell.className = 'empty';
+      cell.colSpan = colSpan;
+      cell.textContent = 'No records';
+      row.appendChild(cell);
+      body.appendChild(row);
+    }
+
+    function appendText(parent, tag, value, className) {
+      const element = document.createElement(tag);
+      if (className) element.className = className;
+      element.textContent = value;
+      parent.appendChild(element);
+      return element;
+    }
+
+    function renderDevices(devices) {
       const body = document.getElementById('devices');
-      body.innerHTML = '';
-      devices.filter(d => !query || d.id.includes(query)).forEach(device => {
+      body.textContent = '';
+      if (!devices.length) {
+        appendEmptyRow(body, 3);
+        return;
+      }
+      devices.forEach(device => {
         const row = document.createElement('tr');
-        row.innerHTML = `<td>${device.id}</td><td class="status">online</td><td>${formatTime(device.updated_at)}</td>`;
+        appendText(row, 'td', device.id);
+        appendText(row, 'td', 'online', 'status');
+        appendText(row, 'td', formatTime(device.updated_at));
         body.appendChild(row);
       });
     }
 
     function renderSessions(sessions) {
       const body = document.getElementById('sessions');
-      body.innerHTML = '';
+      body.textContent = '';
+      if (!sessions.length) {
+        appendEmptyRow(body, 3);
+        return;
+      }
       sessions.forEach(session => {
         const guests = session.guest_ids.join(', ') || '-';
         const row = document.createElement('tr');
-        row.innerHTML = `<td>${session.transmission_id}<br><span class="muted">host ${session.host_id}</span></td><td>${session.participant_count}<br><span class="muted">${guests}</span></td><td><button class="danger" data-id="${session.transmission_id}" data-host="${session.host_id}">Disconnect</button></td>`;
-        body.appendChild(row);
-      });
-      body.querySelectorAll('button').forEach(button => {
+        const transmissionCell = document.createElement('td');
+        appendText(transmissionCell, 'div', session.transmission_id);
+        appendText(transmissionCell, 'span', `host ${session.host_id}`, 'muted');
+        row.appendChild(transmissionCell);
+
+        const participantsCell = document.createElement('td');
+        appendText(participantsCell, 'div', session.participant_count);
+        appendText(participantsCell, 'span', guests, 'muted');
+        row.appendChild(participantsCell);
+
+        const actionCell = document.createElement('td');
+        const button = document.createElement('button');
+        button.className = 'danger';
+        button.textContent = 'Disconnect';
+        button.dataset.id = session.transmission_id;
+        button.dataset.host = session.host_id;
         button.addEventListener('click', () => disconnectSession(button.dataset.id, button.dataset.host, button));
+        actionCell.appendChild(button);
+        row.appendChild(actionCell);
+        body.appendChild(row);
       });
     }
 
-    async function refresh() {
-      const response = await fetch('/api/admin/overview', {credentials: 'same-origin'});
+    function buildOverviewUrl() {
+      const params = new URLSearchParams();
+      params.set('device_limit', state.devices.limit);
+      params.set('device_offset', state.devices.offset);
+      params.set('session_limit', state.sessions.limit);
+      params.set('session_offset', state.sessions.offset);
+      if (state.devices.search) params.set('device_search', state.devices.search);
+      if (state.sessions.search) params.set('session_search', state.sessions.search);
+      return `/api/admin/overview?${params.toString()}`;
+    }
+
+    function syncPage(pageState, pageData) {
+      if (!pageData) return false;
+      pageState.limit = pageData.limit;
+      pageState.offset = pageData.offset;
+      pageState.total = pageData.total;
+      if (pageState.total > 0 && pageState.offset >= pageState.total && pageState.limit > 0) {
+        pageState.offset = Math.floor((pageState.total - 1) / pageState.limit) * pageState.limit;
+        return true;
+      }
+      return false;
+    }
+
+    function updatePager(kind) {
+      const page = state[kind];
+      const prefix = kind === 'devices' ? 'device' : 'session';
+      const start = page.total === 0 ? 0 : Math.min(page.offset + 1, page.total);
+      const end = Math.min(page.offset + page.limit, page.total);
+      document.getElementById(`${prefix}-page-info`).textContent = `${start}-${end} of ${page.total}`;
+      document.getElementById(`${prefix}-prev`).disabled = page.offset === 0;
+      document.getElementById(`${prefix}-next`).disabled = page.offset + page.limit >= page.total;
+      document.getElementById(`${prefix}-limit`).value = String(page.limit);
+    }
+
+    function applyStats(stats) {
+      document.getElementById('metric-devices').textContent = stats.online_device_count;
+      document.getElementById('metric-web').textContent = stats.online_web_client_count;
+      document.getElementById('metric-sessions').textContent = stats.active_connection_count;
+      document.getElementById('last-refresh').textContent = new Date().toLocaleTimeString();
+    }
+
+    async function refreshStats() {
+      let response;
+      try {
+        response = await fetch('/api/admin/stats', {credentials: 'same-origin'});
+      } catch (_) {
+        document.getElementById('refresh-error').textContent = 'Connection error';
+        return false;
+      }
       if (response.status === 401) {
         showLogin('');
         return false;
@@ -177,13 +418,50 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
       }
       const data = await response.json();
       document.getElementById('refresh-error').textContent = '';
-      document.getElementById('metric-devices').textContent = data.stats.online_device_count;
-      document.getElementById('metric-web').textContent = data.stats.online_web_client_count;
-      document.getElementById('metric-sessions').textContent = data.stats.active_connection_count;
-      document.getElementById('last-refresh').textContent = new Date().toLocaleTimeString();
-      devices = data.devices || [];
-      renderDevices();
+      applyStats(data.stats);
+      return true;
+    }
+
+    async function refreshLists() {
+      const serial = ++listRefreshSerial;
+      const refreshButton = document.getElementById('list-refresh');
+      refreshButton.disabled = true;
+      let response;
+      try {
+        response = await fetch(buildOverviewUrl(), {credentials: 'same-origin'});
+      } catch (_) {
+        document.getElementById('refresh-error').textContent = 'Connection error';
+        refreshButton.disabled = false;
+        return false;
+      }
+      if (response.status === 401) {
+        showLogin('');
+        refreshButton.disabled = false;
+        return false;
+      }
+      if (!response.ok) {
+        document.getElementById('refresh-error').textContent = 'Connection error';
+        refreshButton.disabled = false;
+        return false;
+      }
+      const data = await response.json();
+      if (serial !== listRefreshSerial) {
+        refreshButton.disabled = false;
+        return true;
+      }
+      document.getElementById('refresh-error').textContent = '';
+      applyStats(data.stats);
+      const reloadDevices = syncPage(state.devices, data.devices_page);
+      const reloadSessions = syncPage(state.sessions, data.sessions_page);
+      if (reloadDevices || reloadSessions) {
+        refreshButton.disabled = false;
+        return refreshLists();
+      }
+      renderDevices(data.devices || []);
       renderSessions(data.sessions || []);
+      updatePager('devices');
+      updatePager('sessions');
+      refreshButton.disabled = false;
       return true;
     }
 
@@ -195,14 +473,59 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
         credentials: 'same-origin'
       });
       button.disabled = false;
-      if (response.ok) refresh();
+      if (response.ok) {
+        refreshStats();
+        refreshLists();
+      }
       else document.getElementById('refresh-error').textContent = 'Failed to disconnect session';
     }
 
     document.getElementById('login-form').addEventListener('submit', login);
     document.getElementById('logout').addEventListener('click', logout);
-    document.getElementById('device-search').addEventListener('input', renderDevices);
-    refresh().then((ok) => {
+    document.getElementById('device-search').addEventListener('input', (event) => {
+      state.devices.search = event.target.value.trim();
+      state.devices.offset = 0;
+      clearTimeout(searchTimers.devices);
+      searchTimers.devices = setTimeout(refreshLists, 250);
+    });
+    document.getElementById('session-search').addEventListener('input', (event) => {
+      state.sessions.search = event.target.value.trim();
+      state.sessions.offset = 0;
+      clearTimeout(searchTimers.sessions);
+      searchTimers.sessions = setTimeout(refreshLists, 250);
+    });
+    document.getElementById('device-limit').addEventListener('change', (event) => {
+      state.devices.limit = Number(event.target.value);
+      state.devices.offset = 0;
+      refreshLists();
+    });
+    document.getElementById('session-limit').addEventListener('change', (event) => {
+      state.sessions.limit = Number(event.target.value);
+      state.sessions.offset = 0;
+      refreshLists();
+    });
+    document.getElementById('device-prev').addEventListener('click', () => {
+      state.devices.offset = Math.max(0, state.devices.offset - state.devices.limit);
+      refreshLists();
+    });
+    document.getElementById('device-next').addEventListener('click', () => {
+      if (state.devices.offset + state.devices.limit < state.devices.total) {
+        state.devices.offset += state.devices.limit;
+        refreshLists();
+      }
+    });
+    document.getElementById('session-prev').addEventListener('click', () => {
+      state.sessions.offset = Math.max(0, state.sessions.offset - state.sessions.limit);
+      refreshLists();
+    });
+    document.getElementById('session-next').addEventListener('click', () => {
+      if (state.sessions.offset + state.sessions.limit < state.sessions.total) {
+        state.sessions.offset += state.sessions.limit;
+        refreshLists();
+      }
+    });
+    document.getElementById('list-refresh').addEventListener('click', refreshLists);
+    refreshStats().then((ok) => {
       if (ok) showDashboard();
       else showLogin('');
     }).catch(() => showLogin(''));
@@ -225,17 +548,19 @@ AdminController::AdminController(
       send_to_user_(std::move(send_to_user)) {}
 
 bool AdminController::IsAdminRoute(const std::string& resource) {
-  return resource == "/admin" || resource == "/api/admin" ||
-         resource.rfind("/api/admin/", 0) == 0;
+  std::string path = ResourcePath(resource);
+  return path == "/admin" || path == "/api/admin" ||
+         path.rfind("/api/admin/", 0) == 0;
 }
 
 std::string AdminController::ExtractDisconnectTransmissionId(
     const std::string& resource) {
-  if (resource.rfind(kDisconnectPrefix, 0) != 0) {
+  std::string path = ResourcePath(resource);
+  if (path.rfind(kDisconnectPrefix, 0) != 0) {
     return "";
   }
 
-  std::string tail = resource.substr(std::string(kDisconnectPrefix).size());
+  std::string tail = path.substr(std::string(kDisconnectPrefix).size());
   if (tail.size() <= std::string(kDisconnectSuffix).size()) {
     return "";
   }
@@ -250,7 +575,8 @@ std::string AdminController::ExtractDisconnectTransmissionId(
 }
 
 AdminHttpResponse AdminController::Handle(const AdminHttpRequest& request) {
-  if (request.resource == "/admin") {
+  std::string path = ResourcePath(request.resource);
+  if (path == "/admin") {
     return HandleAdminPage();
   }
 
@@ -258,7 +584,7 @@ AdminHttpResponse AdminController::Handle(const AdminHttpRequest& request) {
     return ErrorResponse(503, "admin_disabled");
   }
 
-  if (request.resource == "/api/admin/login") {
+  if (path == "/api/admin/login") {
     return HandleLogin(request);
   }
 
@@ -266,13 +592,16 @@ AdminHttpResponse AdminController::Handle(const AdminHttpRequest& request) {
     return ErrorResponse(401, "unauthorized");
   }
 
-  if (request.resource == "/api/admin/logout") {
+  if (path == "/api/admin/logout") {
     return HandleLogout(request);
   }
-  if (request.resource == "/api/admin/overview") {
+  if (path == "/api/admin/stats") {
+    return HandleStats(request);
+  }
+  if (path == "/api/admin/overview") {
     return HandleOverview(request);
   }
-  if (!ExtractDisconnectTransmissionId(request.resource).empty()) {
+  if (!ExtractDisconnectTransmissionId(path).empty()) {
     return HandleDisconnect(request);
   }
 
@@ -336,15 +665,41 @@ AdminHttpResponse AdminController::HandleLogout(
   return response;
 }
 
+AdminHttpResponse AdminController::HandleStats(
+    const AdminHttpRequest& request) {
+  if (request.method != "GET") {
+    return ErrorResponse(405, "method_not_allowed");
+  }
+
+  size_t online_device_fallback =
+      !presence_ && db_ ? static_cast<size_t>(db_->CountOnlineDevices()) : 0;
+  return JsonResponse(200, {{"stats", BuildStats(online_device_fallback)}});
+}
+
 AdminHttpResponse AdminController::HandleOverview(
     const AdminHttpRequest& request) {
   if (request.method != "GET") {
     return ErrorResponse(405, "method_not_allowed");
   }
 
+  auto params = ParseQueryParams(ResourceQuery(request.resource));
+  size_t device_limit =
+      QuerySizeParam(params, "device_limit", kDefaultPageLimit, kMaxPageLimit);
+  size_t device_offset =
+      QuerySizeParam(params, "device_offset", 0, static_cast<size_t>(-1));
+  std::string device_search = QueryStringParam(params, "device_search");
+  size_t session_limit =
+      QuerySizeParam(params, "session_limit", kDefaultPageLimit, kMaxPageLimit);
+  size_t session_offset =
+      QuerySizeParam(params, "session_offset", 0, static_cast<size_t>(-1));
+  std::string session_search = QueryStringParam(params, "session_search");
+
   nlohmann::json devices = nlohmann::json::array();
+  size_t devices_total = 0;
   if (db_) {
-    for (const auto& device : db_->ListOnlineDevices()) {
+    devices_total = static_cast<size_t>(db_->CountOnlineDevices(device_search));
+    for (const auto& device :
+         db_->ListOnlineDevices(device_limit, device_offset, device_search)) {
       devices.push_back({{"id", device.device_id},
                          {"online", device.online},
                          {"kind", "device"},
@@ -353,8 +708,10 @@ AdminHttpResponse AdminController::HandleOverview(
   }
 
   nlohmann::json sessions = nlohmann::json::array();
+  size_t sessions_total = 0;
   if (transmission_) {
-    for (const auto& snapshot : transmission_->GetTransmissionSnapshots()) {
+    for (const auto& snapshot : transmission_->GetTransmissionSnapshots(
+             session_limit, session_offset, session_search, &sessions_total)) {
       sessions.push_back({{"transmission_id", snapshot.transmission_id},
                           {"host_id", snapshot.host_id},
                           {"guest_ids", snapshot.guest_ids},
@@ -363,16 +720,22 @@ AdminHttpResponse AdminController::HandleOverview(
     }
   }
 
-  nlohmann::json stats = {
-      {"online_device_count",
-       presence_ ? presence_->GetOnlineDeviceCount() : devices.size()},
-      {"online_web_client_count",
-       presence_ ? presence_->GetOnlineWebClientCount() : 0},
-      {"active_connection_count",
-       transmission_ ? transmission_->GetActiveConnectionCount() : 0}};
+  nlohmann::json stats = BuildStats(devices_total);
 
-  return JsonResponse(200,
-                      {{"stats", stats}, {"devices", devices}, {"sessions", sessions}});
+  nlohmann::json devices_page = {{"limit", device_limit},
+                                 {"offset", device_offset},
+                                 {"total", devices_total},
+                                 {"search", device_search}};
+  nlohmann::json sessions_page = {{"limit", session_limit},
+                                  {"offset", session_offset},
+                                  {"total", sessions_total},
+                                  {"search", session_search}};
+
+  return JsonResponse(200, {{"stats", stats},
+                            {"devices", devices},
+                            {"devices_page", devices_page},
+                            {"sessions", sessions},
+                            {"sessions_page", sessions_page}});
 }
 
 AdminHttpResponse AdminController::HandleDisconnect(
@@ -420,6 +783,16 @@ bool AdminController::IsAuthorized(const AdminHttpRequest& request) {
   }
   std::string token = AdminAuth::ExtractCookie(request.cookie, kSessionCookieName);
   return auth_->ValidateSession(token);
+}
+
+nlohmann::json AdminController::BuildStats(size_t online_device_fallback) const {
+  return {{"online_device_count",
+           presence_ ? presence_->GetOnlineDeviceCount()
+                     : online_device_fallback},
+          {"online_web_client_count",
+           presence_ ? presence_->GetOnlineWebClientCount() : 0},
+          {"active_connection_count",
+           transmission_ ? transmission_->GetActiveConnectionCount() : 0}};
 }
 
 AdminHttpResponse AdminController::JsonResponse(

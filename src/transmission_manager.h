@@ -8,6 +8,7 @@
 #define _TRANSMISSION_MANAGER_H_
 
 #include <atomic>
+#include <cstddef>
 #include <condition_variable>
 #include <map>
 #include <mutex>
@@ -41,6 +42,9 @@ class TransmissionManager {
       const std::string& transmission_id);
 
   std::vector<TransmissionSnapshot> GetTransmissionSnapshots();
+  std::vector<TransmissionSnapshot> GetTransmissionSnapshots(
+      size_t limit, size_t offset, const std::string& search,
+      size_t* filtered_count);
 
   std::string GetHostIdOfTransmission(const std::string& transmission_id);
 

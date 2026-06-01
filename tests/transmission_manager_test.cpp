@@ -65,5 +65,26 @@ int main() {
   expect(transmission.GetActiveConnectionCount() == 0,
          "host close does not decrement an already released guest count");
 
+  {
+    TransmissionManager paged_transmission;
+    paged_transmission.BindHostToTransmission("host-1", "tx-1");
+    paged_transmission.BindGuestToTransmission("guest-1", "tx-1");
+    paged_transmission.BindHostToTransmission("host-2", "tx-2");
+    paged_transmission.BindGuestToTransmission("guest-2", "tx-2");
+
+    size_t filtered_count = 0;
+    auto page =
+        paged_transmission.GetTransmissionSnapshots(1, 1, "", &filtered_count);
+    expect(filtered_count == 2,
+           "paged snapshot reports filtered transmission count");
+    expect(page.size() == 1, "paged snapshot applies limit and offset");
+
+    auto filtered = paged_transmission.GetTransmissionSnapshots(
+        10, 0, "guest-2", &filtered_count);
+    expect(filtered_count == 1, "paged snapshot count supports search");
+    expect(filtered.size() == 1 && filtered[0].transmission_id == "tx-2",
+           "paged snapshot search matches guest id");
+  }
+
   return failures == 0 ? 0 : 1;
 }

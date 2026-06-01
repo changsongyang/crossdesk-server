@@ -44,10 +44,12 @@ class AdminController {
   AdminHttpResponse HandleAdminPage();
   AdminHttpResponse HandleLogin(const AdminHttpRequest& request);
   AdminHttpResponse HandleLogout(const AdminHttpRequest& request);
+  AdminHttpResponse HandleStats(const AdminHttpRequest& request);
   AdminHttpResponse HandleOverview(const AdminHttpRequest& request);
   AdminHttpResponse HandleDisconnect(const AdminHttpRequest& request);
 
   bool IsAuthorized(const AdminHttpRequest& request);
+  nlohmann::json BuildStats(size_t online_device_fallback) const;
   AdminHttpResponse JsonResponse(int status, const nlohmann::json& body) const;
   AdminHttpResponse HtmlResponse(int status, const std::string& body) const;
   AdminHttpResponse ErrorResponse(int status, const std::string& error) const;

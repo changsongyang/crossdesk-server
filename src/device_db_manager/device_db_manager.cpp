@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -22,6 +23,18 @@ std::string ColumnText(sqlite3_stmt* stmt, int column) {
 
 std::string SqliteExecError(sqlite3* db, char* err_msg) {
   return err_msg ? std::string(err_msg) : std::string(sqlite3_errmsg(db));
+}
+
+std::string EscapeLikePattern(const std::string& value) {
+  std::string escaped;
+  escaped.reserve(value.size());
+  for (char ch : value) {
+    if (ch == '%' || ch == '_' || ch == '\\') {
+      escaped.push_back('\\');
+    }
+    escaped.push_back(ch);
+  }
+  return escaped;
 }
 
 }  // namespace
@@ -494,21 +507,34 @@ bool DeviceDBManager::SetDeviceOnline(const std::string& device_id,
 }
 
 int DeviceDBManager::GetOnlineDeviceCount() {
+  return CountOnlineDevices();
+}
+
+int DeviceDBManager::CountOnlineDevices(const std::string& search) {
   std::lock_guard<std::recursive_mutex> lock(db_mutex_);
   if (db_ == nullptr) {
-    LOG_ERROR("Database is not initialized in GetOnlineDeviceCount.");
+    LOG_ERROR("Database is not initialized in CountOnlineDevices.");
     return 0;
   }
 
-  const char* sql =
+  std::string sql =
       "SELECT COUNT(*) FROM device_presence "
       "WHERE online = 1 "
       "AND device_id NOT LIKE 'web-%' "
-      "AND device_id NOT LIKE 'C-%';";
+      "AND device_id NOT LIKE 'C-%' ";
+  if (!search.empty()) {
+    sql += "AND device_id LIKE ? ESCAPE '\\' ";
+  }
+  sql += ";";
 
   sqlite3_stmt* stmt = nullptr;
-  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+  if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &stmt, nullptr) !=
+      SQLITE_OK) {
     return 0;
+  }
+  if (!search.empty()) {
+    std::string pattern = "%" + EscapeLikePattern(search) + "%";
+    sqlite3_bind_text(stmt, 1, pattern.c_str(), -1, SQLITE_TRANSIENT);
   }
 
   int count = 0;
@@ -520,6 +546,12 @@ int DeviceDBManager::GetOnlineDeviceCount() {
 }
 
 std::vector<OnlineDeviceInfo> DeviceDBManager::ListOnlineDevices() {
+  return ListOnlineDevices(static_cast<size_t>(std::numeric_limits<int>::max()),
+                           0, "");
+}
+
+std::vector<OnlineDeviceInfo> DeviceDBManager::ListOnlineDevices(
+    size_t limit, size_t offset, const std::string& search) {
   std::lock_guard<std::recursive_mutex> lock(db_mutex_);
   std::vector<OnlineDeviceInfo> result;
   if (db_ == nullptr) {
@@ -527,17 +559,29 @@ std::vector<OnlineDeviceInfo> DeviceDBManager::ListOnlineDevices() {
     return result;
   }
 
-  const char* sql =
+  std::string sql =
       "SELECT device_id, online, updated_at FROM device_presence "
       "WHERE online = 1 "
       "AND device_id NOT LIKE 'web-%' "
-      "AND device_id NOT LIKE 'C-%' "
-      "ORDER BY updated_at DESC, device_id ASC;";
+      "AND device_id NOT LIKE 'C-%' ";
+  if (!search.empty()) {
+    sql += "AND device_id LIKE ? ESCAPE '\\' ";
+  }
+  sql += "ORDER BY updated_at DESC, device_id ASC LIMIT ? OFFSET ?;";
 
   sqlite3_stmt* stmt = nullptr;
-  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+  if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &stmt, nullptr) !=
+      SQLITE_OK) {
     return result;
   }
+  int bind_index = 1;
+  if (!search.empty()) {
+    std::string pattern = "%" + EscapeLikePattern(search) + "%";
+    sqlite3_bind_text(stmt, bind_index++, pattern.c_str(), -1,
+                      SQLITE_TRANSIENT);
+  }
+  sqlite3_bind_int64(stmt, bind_index++, static_cast<sqlite3_int64>(limit));
+  sqlite3_bind_int64(stmt, bind_index++, static_cast<sqlite3_int64>(offset));
 
   while (sqlite3_step(stmt) == SQLITE_ROW) {
     OnlineDeviceInfo info;

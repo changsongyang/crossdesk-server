@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <limits>
 #include <memory>
 
 #include "log.h"
@@ -28,6 +29,29 @@ void SubtractActiveConnectionCount(std::atomic<size_t>& count,
                                    size_t amount) {
   size_t current = count.load();
   count.store(amount > current ? 0 : current - amount);
+}
+
+bool ContainsText(const std::string& value, const std::string& search) {
+  return value.find(search) != std::string::npos;
+}
+
+bool TransmissionMatchesSearch(const std::string& transmission_id,
+                               const std::string& host_id,
+                               const std::vector<std::string>* guest_ids,
+                               const std::string& search) {
+  if (search.empty()) {
+    return true;
+  }
+  if (ContainsText(transmission_id, search) || ContainsText(host_id, search)) {
+    return true;
+  }
+  if (!guest_ids) {
+    return false;
+  }
+  return std::any_of(guest_ids->begin(), guest_ids->end(),
+                     [&search](const std::string& guest_id) {
+                       return ContainsText(guest_id, search);
+                     });
 }
 
 }  // namespace
@@ -109,16 +133,41 @@ std::vector<std::string> TransmissionManager::GetAllUserIdOfTransmission(
 }
 
 std::vector<TransmissionSnapshot> TransmissionManager::GetTransmissionSnapshots() {
+  size_t ignored_count = 0;
+  return GetTransmissionSnapshots(std::numeric_limits<size_t>::max(), 0, "",
+                                  &ignored_count);
+}
+
+std::vector<TransmissionSnapshot> TransmissionManager::GetTransmissionSnapshots(
+    size_t limit, size_t offset, const std::string& search,
+    size_t* filtered_count) {
   std::lock_guard<std::recursive_mutex> lock(ws_hdl_alive_checker_mutex_);
   std::vector<TransmissionSnapshot> result;
-  result.reserve(transmission_host_id_list_.size());
+  if (limit > 0) {
+    result.reserve(std::min(limit, transmission_host_id_list_.size()));
+  }
 
+  size_t matched_count = 0;
   for (const auto& host_pair : transmission_host_id_list_) {
+    auto guest_it = transmission_guest_id_list_.find(host_pair.first);
+    const std::vector<std::string>* guest_ids =
+        guest_it != transmission_guest_id_list_.end() ? &guest_it->second
+                                                      : nullptr;
+    if (!TransmissionMatchesSearch(host_pair.first, host_pair.second,
+                                   guest_ids, search)) {
+      continue;
+    }
+    if (matched_count++ < offset) {
+      continue;
+    }
+    if (result.size() >= limit) {
+      continue;
+    }
+
     TransmissionSnapshot snapshot;
     snapshot.transmission_id = host_pair.first;
     snapshot.host_id = host_pair.second;
-    auto guest_it = transmission_guest_id_list_.find(host_pair.first);
-    if (guest_it != transmission_guest_id_list_.end()) {
+    if (guest_ids) {
       snapshot.guest_ids = guest_it->second;
     }
     snapshot.participant_count = 1 + snapshot.guest_ids.size();
@@ -126,6 +175,9 @@ std::vector<TransmissionSnapshot> TransmissionManager::GetTransmissionSnapshots(
     result.push_back(snapshot);
   }
 
+  if (filtered_count) {
+    *filtered_count = matched_count;
+  }
   return result;
 }
 
