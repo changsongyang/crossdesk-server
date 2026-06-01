@@ -10,6 +10,7 @@
 #include <sqlite3.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -24,6 +25,18 @@ struct OnlineDeviceInfo {
   std::string device_id;
   bool online = false;
   int64_t updated_at = 0;
+  int64_t online_since = 0;
+  int64_t online_duration_seconds = 0;
+  int64_t total_online_seconds = 0;
+  int64_t total_control_seconds = 0;
+  int64_t total_controlled_seconds = 0;
+};
+
+struct OnlineDurationStats {
+  int64_t current_online_seconds = 0;
+  int64_t total_online_seconds = 0;
+  int64_t total_control_seconds = 0;
+  int64_t total_controlled_seconds = 0;
 };
 
 class DeviceDBManager {
@@ -44,10 +57,20 @@ class DeviceDBManager {
   bool RemoveDevice(const std::string& device_id);
 
   bool SetDeviceOnline(const std::string& device_id, bool online);
+  bool StartRemoteControlSession(const std::string& transmission_id,
+                                 const std::string& host_id,
+                                 const std::string& guest_id);
+  bool EndRemoteControlSession(const std::string& transmission_id,
+                               const std::string& host_id,
+                               const std::string& guest_id);
   int GetOnlineDeviceCount();
   int CountOnlineDevices(const std::string& search = "");
+  int CountDevicePresence(const std::string& search = "");
+  OnlineDurationStats GetOnlineDurationStats();
   std::vector<OnlineDeviceInfo> ListOnlineDevices();
   std::vector<OnlineDeviceInfo> ListOnlineDevices(
+      size_t limit, size_t offset, const std::string& search);
+  std::vector<OnlineDeviceInfo> ListDevicePresence(
       size_t limit, size_t offset, const std::string& search);
   std::vector<std::pair<std::string, bool>> BatchQueryOnline(
       const std::vector<std::string>& device_ids);

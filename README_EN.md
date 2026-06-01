@@ -142,13 +142,21 @@ The `/api/stats` path is also supported. Example response:
 {
   "online_device_count": 12,
   "online_web_client_count": 2,
-  "active_connection_count": 3
+  "active_connection_count": 3,
+  "online_duration_seconds": 86400,
+  "total_online_seconds": 259200,
+  "total_control_seconds": 3600,
+  "total_controlled_seconds": 7200
 }
 ```
 
 - `online_device_count`: Number of online devices, excluding temporary `web-*` clients and `C-*` clone clients
 - `online_web_client_count`: Number of online web clients, counting only temporary `web-*` clients
 - `active_connection_count`: Number of active in-progress connections, summed from the current guests connected to each host; a guest's own login or join connection is not counted separately
+- `online_duration_seconds`: Sum of the current online session duration for online devices, excluding temporary `web-*` clients and `C-*` clone clients
+- `total_online_seconds`: Sum of accumulated device online duration, including the current session duration for devices that are still online
+- `total_control_seconds`: Sum of accumulated duration where devices are controlling another device, including active remote-control sessions
+- `total_controlled_seconds`: Sum of accumulated duration where devices are being controlled, including active remote-control sessions
 - The response includes `Access-Control-Allow-Origin: *`, so it can be called directly from browser `fetch`
 
 ### Certificate Files
@@ -193,4 +201,4 @@ After startup, open:
 https://your-domain.example.com:9090/admin
 ```
 
-The dashboard shows online devices, online web clients, and active remote-control sessions, and supports disconnecting a selected remote-control session.
+The dashboard shows online devices, online web clients, active remote-control sessions, online duration, total control duration, and total controlled duration, and supports disconnecting a selected remote-control session. The client-presence table shows each client's current online duration, accumulated online duration, accumulated control duration, and accumulated controlled duration; the current duration refreshes live while a client is online, and the row stays visible with the last-online timestamp after the client goes offline.

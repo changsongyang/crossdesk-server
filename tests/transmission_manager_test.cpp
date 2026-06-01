@@ -18,6 +18,34 @@ int main() {
   expect(transmission.GetActiveConnectionCount() == 0,
          "initial active connection count is zero");
 
+  {
+    TransmissionManager callback_transmission;
+    int starts = 0;
+    int ends = 0;
+    callback_transmission.SetRemoteControlSessionCallback(
+        [&](const std::string& transmission_id, const std::string& host_id,
+            const std::string& guest_id, bool started) {
+          if (transmission_id == "host-callback" &&
+              host_id == "host-callback" && guest_id == "guest-callback") {
+            if (started) {
+              ++starts;
+            } else {
+              ++ends;
+            }
+          }
+        });
+    expect(callback_transmission.BindHostToTransmission("host-callback",
+                                                        "host-callback"),
+           "callback host binds to transmission");
+    expect(callback_transmission.BindGuestToTransmission("guest-callback",
+                                                         "host-callback"),
+           "callback guest joins transmission");
+    expect(starts == 1, "guest join emits remote control start callback");
+    expect(callback_transmission.ReleaseGuestFromTransmission("guest-callback"),
+           "callback guest leaves transmission");
+    expect(ends == 1, "guest leave emits remote control end callback");
+  }
+
   expect(!transmission.BindGuestToTransmission("orphan-guest", "missing-host"),
          "guest cannot join a missing host transmission");
   expect(transmission.GetActiveConnectionCount() == 0,

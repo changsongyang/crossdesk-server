@@ -64,6 +64,20 @@ SignalServer::SignalServer() {
 
   transmission_manager_ = std::make_shared<TransmissionManager>();
   device_db_manager_ = std::make_unique<DeviceDBManager>(db_path_);
+  transmission_manager_->SetRemoteControlSessionCallback(
+      [this](const std::string& transmission_id, const std::string& host_id,
+             const std::string& guest_id, bool started) {
+        if (!device_db_manager_) {
+          return;
+        }
+        if (started) {
+          device_db_manager_->StartRemoteControlSession(transmission_id,
+                                                        host_id, guest_id);
+        } else {
+          device_db_manager_->EndRemoteControlSession(transmission_id, host_id,
+                                                      guest_id);
+        }
+      });
   signal_negotiation_ = std::make_unique<SignalNegotiation>(
       transmission_manager_, device_db_manager_.get());
   signal_negotiation_->SetSendMsgCallback(std::bind(&SignalServer::SendMsg,
@@ -120,6 +134,20 @@ SignalServer::SignalServer(uint16_t port, std::string certs_dir,
 
   transmission_manager_ = std::make_shared<TransmissionManager>();
   device_db_manager_ = std::make_unique<DeviceDBManager>(db_path_);
+  transmission_manager_->SetRemoteControlSessionCallback(
+      [this](const std::string& transmission_id, const std::string& host_id,
+             const std::string& guest_id, bool started) {
+        if (!device_db_manager_) {
+          return;
+        }
+        if (started) {
+          device_db_manager_->StartRemoteControlSession(transmission_id,
+                                                        host_id, guest_id);
+        } else {
+          device_db_manager_->EndRemoteControlSession(transmission_id, host_id,
+                                                      guest_id);
+        }
+      });
   signal_negotiation_ = std::make_unique<SignalNegotiation>(
       transmission_manager_, device_db_manager_.get());
   signal_negotiation_->SetSendMsgCallback(std::bind(&SignalServer::SendMsg,
@@ -204,6 +232,10 @@ void SignalServer::OnHttp(websocketpp::connection_hdl hdl) {
   }
 
   if (resource == "/stats" || resource == "/api/stats") {
+    OnlineDurationStats duration_stats;
+    if (device_db_manager_) {
+      duration_stats = device_db_manager_->GetOnlineDurationStats();
+    }
     json body = {
         {"online_device_count",
          presence_manager_ ? presence_manager_->GetOnlineDeviceCount() : 0},
@@ -213,6 +245,11 @@ void SignalServer::OnHttp(websocketpp::connection_hdl hdl) {
          transmission_manager_
              ? transmission_manager_->GetActiveConnectionCount()
              : 0},
+        {"online_duration_seconds", duration_stats.current_online_seconds},
+        {"total_online_seconds", duration_stats.total_online_seconds},
+        {"total_control_seconds", duration_stats.total_control_seconds},
+        {"total_controlled_seconds",
+         duration_stats.total_controlled_seconds},
     };
     SetJsonResponse(con, websocketpp::http::status_code::ok, body);
     return;

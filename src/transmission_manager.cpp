@@ -4,6 +4,7 @@
 #include <chrono>
 #include <limits>
 #include <memory>
+#include <utility>
 
 #include "log.h"
 
@@ -82,8 +83,17 @@ bool TransmissionManager::IsTransmissionExist(
 bool TransmissionManager::ReleaseTransmission(
     const std::string& transmission_id) {
   std::lock_guard<std::recursive_mutex> lock(ws_hdl_alive_checker_mutex_);
+  auto host_it = transmission_host_id_list_.find(transmission_id);
+  std::string host_id =
+      host_it != transmission_host_id_list_.end() ? host_it->second : "";
   auto guest_it = transmission_guest_id_list_.find(transmission_id);
   if (guest_it != transmission_guest_id_list_.end()) {
+    if (remote_control_session_callback_) {
+      for (const auto& guest_id : guest_it->second) {
+        remote_control_session_callback_(transmission_id, host_id, guest_id,
+                                         false);
+      }
+    }
     transmission_guest_id_list_.erase(guest_it);
   }
   transmission_host_id_list_.erase(transmission_id);
@@ -224,6 +234,10 @@ bool TransmissionManager::BindGuestToTransmission(
     return false;
   }
   guests.push_back(guest_id);
+  if (remote_control_session_callback_) {
+    remote_control_session_callback_(transmission_id, host_it->second, guest_id,
+                                     true);
+  }
   LOG_INFO("Bind guest [{}] to transmission [{}]", guest_id, transmission_id);
   return true;
 }
@@ -234,6 +248,14 @@ bool TransmissionManager::BindUserToWsHandle(const std::string& user_id,
   user_id_ws_hdl_list_[user_id] = hdl;
   ws_hdl_user_id_list_[hdl] = user_id;
   return true;
+}
+
+void TransmissionManager::SetRemoteControlSessionCallback(
+    std::function<void(const std::string&, const std::string&,
+                       const std::string&, bool)>
+        callback) {
+  std::lock_guard<std::recursive_mutex> lock(ws_hdl_alive_checker_mutex_);
+  remote_control_session_callback_ = std::move(callback);
 }
 
 bool TransmissionManager::ReleaseGuestFromTransmission(
@@ -249,6 +271,13 @@ bool TransmissionManager::ReleaseGuestFromTransmission(
       continue;
     }
 
+    auto host_it = transmission_host_id_list_.find(map_it->first);
+    std::string host_id =
+        host_it != transmission_host_id_list_.end() ? host_it->second : "";
+    if (remote_control_session_callback_) {
+      remote_control_session_callback_(map_it->first, host_id, guest_id,
+                                       false);
+    }
     list.erase(remove_begin, list.end());
     released = true;
     if (list.empty()) {

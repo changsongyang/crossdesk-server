@@ -143,13 +143,21 @@ curl --cacert /var/lib/crossdesk/certs/api.crossdesk.cn_root.crt \
 {
   "online_device_count": 12,
   "online_web_client_count": 2,
-  "active_connection_count": 3
+  "active_connection_count": 3,
+  "online_duration_seconds": 86400,
+  "total_online_seconds": 259200,
+  "total_control_seconds": 3600,
+  "total_controlled_seconds": 7200
 }
 ```
 
 - `online_device_count`：当前在线设备数，不包含临时 `web-*` 客户端和 `C-*` 分身客户端
 - `online_web_client_count`：当前在线 Web 客户端数，仅统计临时 `web-*` 客户端
 - `active_connection_count`：当前处于连接中的会话数，按各 host 当前连接的 guest 数汇总；guest 自身登录或加入产生的连接不另行计数
+- `online_duration_seconds`：当前在线设备本次在线时长的总和，不包含临时 `web-*` 客户端和 `C-*` 分身客户端
+- `total_online_seconds`：设备累计在线时长的总和，包含当前仍在线设备的本次在线时长
+- `total_control_seconds`：设备作为控制端的累计远控时长总和，包含当前仍在进行的远控会话
+- `total_controlled_seconds`：设备作为被控端的累计远控时长总和，包含当前仍在进行的远控会话
 - 响应已带 `Access-Control-Allow-Origin: *`，可直接被网页端 `fetch` 调用
 
 ## 证书文件
@@ -193,4 +201,4 @@ sudo docker run -d \
 https://your-domain.example.com:9090/admin
 ```
 
-后台页面会显示在线设备数、在线 Web 客户端数和活动远控会话，并支持断开选中的远控会话。
+后台页面会显示在线设备数、在线 Web 客户端数、活动远控会话、在线时长、总控制时长和总被控时长，并支持断开选中的远控会话。客户端状态列表会展示每台客户端的本次在线时长、累计在线时长、累计控制时长和累计被控时长；客户端在线时本次时长会实时刷新，下线后保留记录并显示最后在线时间点。

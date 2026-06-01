@@ -10,6 +10,7 @@
 #include <atomic>
 #include <cstddef>
 #include <condition_variable>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <string>
@@ -54,6 +55,10 @@ class TransmissionManager {
                                const std::string& transmission_id);
   bool BindUserToWsHandle(const std::string& user_id,
                           websocketpp::connection_hdl hdl);
+  void SetRemoteControlSessionCallback(
+      std::function<void(const std::string&, const std::string&,
+                         const std::string&, bool)>
+          callback);
 
   bool ReleaseGuestFromTransmission(const std::string& guest_id);
   bool DisconnectTransmission(const std::string& transmission_id);
@@ -80,6 +85,9 @@ class TransmissionManager {
   std::map<websocketpp::connection_hdl, uint32_t,
            std::owner_less<websocketpp::connection_hdl>>
       ws_hdl_last_active_time_map_;
+  std::function<void(const std::string&, const std::string&,
+                     const std::string&, bool)>
+      remote_control_session_callback_;
 
   std::thread ws_hdl_alive_checker_;
   std::recursive_mutex ws_hdl_alive_checker_mutex_;

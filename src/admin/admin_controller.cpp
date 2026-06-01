@@ -139,7 +139,7 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
     .login { min-height: 70vh; display: grid; place-items: center; }
     .panel { background: #ffffff; border: 1px solid #d9dee5; border-radius: 8px; padding: 18px; }
     .login .panel { width: min(360px, calc(100vw - 40px)); display: grid; gap: 12px; }
-    .metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-bottom: 18px; }
+    .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 18px; }
     .metric { background: #ffffff; border: 1px solid #d9dee5; border-radius: 8px; padding: 16px; }
     .metric span { color: #667085; font-size: 13px; }
     .metric strong { display: block; font-size: 30px; margin-top: 6px; }
@@ -153,6 +153,7 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
     th { color: #667085; font-weight: 600; }
     .pager { display: flex; gap: 8px; align-items: center; justify-content: flex-end; margin-top: 12px; color: #667085; font-size: 13px; flex-wrap: wrap; }
     .status { color: #067647; font-weight: 600; }
+    .offline { color: #667085; font-weight: 600; }
     .muted { color: #667085; }
     .error { color: #b42318; min-height: 20px; }
     .empty { color: #667085; text-align: center; padding: 16px 8px; }
@@ -187,11 +188,14 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
         <div class="metric"><span>Online devices</span><strong id="metric-devices">0</strong></div>
         <div class="metric"><span>Web clients</span><strong id="metric-web">0</strong></div>
         <div class="metric"><span>Active sessions</span><strong id="metric-sessions">0</strong></div>
+        <div class="metric"><span>Online time</span><strong id="metric-duration">0s</strong></div>
+        <div class="metric"><span>Control time</span><strong id="metric-control">0s</strong></div>
+        <div class="metric"><span>Controlled time</span><strong id="metric-controlled">0s</strong></div>
       </div>
       <div class="grid">
         <section class="panel">
           <div class="toolbar">
-            <h2>Online Devices</h2>
+            <h2>Client Presence</h2>
             <div class="actions">
               <input id="device-search" placeholder="Search device ID">
               <select id="device-limit" aria-label="Devices per page">
@@ -202,7 +206,7 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
             </div>
           </div>
           <table>
-            <thead><tr><th>Device ID</th><th>Status</th><th>Updated</th></tr></thead>
+            <thead><tr><th>Device ID</th><th>Status</th><th>Time</th><th>Current online</th><th>Total online</th><th>Total control</th><th>Total controlled</th></tr></thead>
             <tbody id="devices"></tbody>
           </table>
           <div class="pager">
@@ -246,7 +250,17 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
     };
     const searchTimers = {devices: null, sessions: null};
     let statsTimer = null;
+    let listTimer = null;
+    let durationTimer = null;
     let listRefreshSerial = 0;
+    let statsSnapshot = {
+      onlineDuration: 0,
+      onlineCount: 0,
+      controlDuration: 0,
+      controlledDuration: 0,
+      activeConnections: 0,
+      capturedAt: 0
+    };
 
     function showDashboard() {
       loginView.classList.add('hidden');
@@ -255,6 +269,8 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
       refreshStats();
       refreshLists();
       if (!statsTimer) statsTimer = setInterval(refreshStats, 5000);
+      if (!listTimer) listTimer = setInterval(refreshLists, 5000);
+      if (!durationTimer) durationTimer = setInterval(updateLiveDurations, 1000);
     }
 
     function showLogin(message) {
@@ -263,6 +279,10 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
       logoutButton.classList.add('hidden');
       if (statsTimer) clearInterval(statsTimer);
       statsTimer = null;
+      if (listTimer) clearInterval(listTimer);
+      listTimer = null;
+      if (durationTimer) clearInterval(durationTimer);
+      durationTimer = null;
       document.getElementById('login-error').textContent = message || '';
     }
 
@@ -292,6 +312,21 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
       return new Date(value * 1000).toLocaleString();
     }
 
+    function formatDuration(value) {
+      let seconds = Number(value) || 0;
+      if (seconds < 0) seconds = 0;
+      const days = Math.floor(seconds / 86400);
+      seconds %= 86400;
+      const hours = Math.floor(seconds / 3600);
+      seconds %= 3600;
+      const minutes = Math.floor(seconds / 60);
+      seconds = Math.floor(seconds % 60);
+      if (days > 0) return `${days}d ${hours}h`;
+      if (hours > 0) return `${hours}h ${minutes}m`;
+      if (minutes > 0) return `${minutes}m ${seconds}s`;
+      return `${seconds}s`;
+    }
+
     function appendEmptyRow(body, colSpan) {
       const row = document.createElement('tr');
       const cell = document.createElement('td');
@@ -314,16 +349,36 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
       const body = document.getElementById('devices');
       body.textContent = '';
       if (!devices.length) {
-        appendEmptyRow(body, 3);
+        appendEmptyRow(body, 7);
         return;
       }
+      const capturedAt = Math.floor(Date.now() / 1000);
       devices.forEach(device => {
         const row = document.createElement('tr');
         appendText(row, 'td', device.id);
-        appendText(row, 'td', 'online', 'status');
-        appendText(row, 'td', formatTime(device.updated_at));
+        appendText(row, 'td', device.online ? 'online' : 'offline', device.online ? 'status' : 'offline');
+
+        const timeCell = document.createElement('td');
+        appendText(timeCell, 'div', formatTime(device.online ? device.online_since : device.updated_at));
+        appendText(timeCell, 'span', device.online ? 'online since' : 'last online', 'muted');
+        row.appendChild(timeCell);
+
+        const currentCell = appendText(row, 'td', device.online ? formatDuration(device.online_duration_seconds) : '-');
+        currentCell.dataset.duration = 'current';
+        currentCell.dataset.online = device.online ? '1' : '0';
+        currentCell.dataset.base = String(device.online_duration_seconds || 0);
+        currentCell.dataset.capturedAt = String(capturedAt);
+
+        const totalCell = appendText(row, 'td', formatDuration(device.total_online_seconds));
+        totalCell.dataset.duration = 'total';
+        totalCell.dataset.online = device.online ? '1' : '0';
+        totalCell.dataset.base = String(device.total_online_seconds || 0);
+        totalCell.dataset.capturedAt = String(capturedAt);
+        appendText(row, 'td', formatDuration(device.total_control_seconds));
+        appendText(row, 'td', formatDuration(device.total_controlled_seconds));
         body.appendChild(row);
       });
+      updateLiveDurations();
     }
 
     function renderSessions(sessions) {
@@ -397,7 +452,46 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
       document.getElementById('metric-devices').textContent = stats.online_device_count;
       document.getElementById('metric-web').textContent = stats.online_web_client_count;
       document.getElementById('metric-sessions').textContent = stats.active_connection_count;
+      document.getElementById('metric-duration').textContent = formatDuration(stats.online_duration_seconds);
+      document.getElementById('metric-control').textContent = formatDuration(stats.total_control_seconds);
+      document.getElementById('metric-controlled').textContent = formatDuration(stats.total_controlled_seconds);
       document.getElementById('last-refresh').textContent = new Date().toLocaleTimeString();
+      statsSnapshot = {
+        onlineDuration: Number(stats.online_duration_seconds) || 0,
+        onlineCount: Number(stats.online_device_count) || 0,
+        controlDuration: Number(stats.total_control_seconds) || 0,
+        controlledDuration: Number(stats.total_controlled_seconds) || 0,
+        activeConnections: Number(stats.active_connection_count) || 0,
+        capturedAt: Math.floor(Date.now() / 1000)
+      };
+    }
+
+    function updateLiveDurations() {
+      const now = Math.floor(Date.now() / 1000);
+      document.querySelectorAll('[data-duration="current"]').forEach(cell => {
+        if (cell.dataset.online !== '1') return;
+        const base = Number(cell.dataset.base) || 0;
+        const capturedAt = Number(cell.dataset.capturedAt) || now;
+        cell.textContent = formatDuration(base + now - capturedAt);
+      });
+      document.querySelectorAll('[data-duration="total"]').forEach(cell => {
+        if (cell.dataset.online !== '1') return;
+        const base = Number(cell.dataset.base) || 0;
+        const capturedAt = Number(cell.dataset.capturedAt) || now;
+        cell.textContent = formatDuration(base + now - capturedAt);
+      });
+      if (statsSnapshot.capturedAt > 0) {
+        const elapsed = now - statsSnapshot.capturedAt;
+        document.getElementById('metric-duration').textContent =
+          formatDuration(statsSnapshot.onlineDuration +
+            statsSnapshot.onlineCount * elapsed);
+        document.getElementById('metric-control').textContent =
+          formatDuration(statsSnapshot.controlDuration +
+            statsSnapshot.activeConnections * elapsed);
+        document.getElementById('metric-controlled').textContent =
+          formatDuration(statsSnapshot.controlledDuration +
+            statsSnapshot.activeConnections * elapsed);
+      }
     }
 
     async function refreshStats() {
@@ -697,13 +791,24 @@ AdminHttpResponse AdminController::HandleOverview(
   nlohmann::json devices = nlohmann::json::array();
   size_t devices_total = 0;
   if (db_) {
-    devices_total = static_cast<size_t>(db_->CountOnlineDevices(device_search));
+    devices_total = static_cast<size_t>(db_->CountDevicePresence(device_search));
     for (const auto& device :
-         db_->ListOnlineDevices(device_limit, device_offset, device_search)) {
+         db_->ListDevicePresence(device_limit, device_offset, device_search)) {
       devices.push_back({{"id", device.device_id},
                          {"online", device.online},
                          {"kind", "device"},
-                         {"updated_at", device.updated_at}});
+                         {"updated_at", device.updated_at},
+                         {"last_online_at",
+                          device.online ? 0 : device.updated_at},
+                         {"online_since", device.online_since},
+                         {"online_duration_seconds",
+                          device.online_duration_seconds},
+                         {"total_online_seconds",
+                          device.total_online_seconds},
+                         {"total_control_seconds",
+                          device.total_control_seconds},
+                         {"total_controlled_seconds",
+                          device.total_controlled_seconds}});
     }
   }
 
@@ -786,13 +891,24 @@ bool AdminController::IsAuthorized(const AdminHttpRequest& request) {
 }
 
 nlohmann::json AdminController::BuildStats(size_t online_device_fallback) const {
+  OnlineDurationStats duration_stats;
+  if (db_) {
+    duration_stats = db_->GetOnlineDurationStats();
+  }
+
   return {{"online_device_count",
            presence_ ? presence_->GetOnlineDeviceCount()
                      : online_device_fallback},
           {"online_web_client_count",
            presence_ ? presence_->GetOnlineWebClientCount() : 0},
           {"active_connection_count",
-           transmission_ ? transmission_->GetActiveConnectionCount() : 0}};
+           transmission_ ? transmission_->GetActiveConnectionCount() : 0},
+          {"online_duration_seconds",
+           duration_stats.current_online_seconds},
+          {"total_online_seconds", duration_stats.total_online_seconds},
+          {"total_control_seconds", duration_stats.total_control_seconds},
+          {"total_controlled_seconds",
+           duration_stats.total_controlled_seconds}};
 }
 
 AdminHttpResponse AdminController::JsonResponse(

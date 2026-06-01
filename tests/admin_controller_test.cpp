@@ -1,11 +1,13 @@
 #include "admin_controller.h"
 
 #include <chrono>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <string>
 
 #include "admin_auth.h"
+#include "device_db_manager.h"
 #include "transmission_manager.h"
 
 int main() {
@@ -98,6 +100,68 @@ int main() {
   auto stats_body = nlohmann::json::parse(stats.body);
   expect(stats_body["stats"]["active_connection_count"] == 1,
          "stats reports active connection count");
+  expect(stats_body["stats"]["online_duration_seconds"] == 0,
+         "stats reports online duration without database");
+
+  const auto db_path =
+      std::filesystem::temp_directory_path() /
+      ("crossdesk_admin_controller_test_" +
+       std::to_string(std::chrono::steady_clock::now()
+                          .time_since_epoch()
+                          .count()) +
+       ".db");
+  {
+    DeviceDBManager db(db_path.string());
+    db.SetDeviceOnline("device-admin-1", true);
+    db.SetDeviceOnline("device-admin-offline", true);
+    db.SetDeviceOnline("device-admin-offline", false);
+    db.StartRemoteControlSession("tx-admin", "device-admin-1",
+                                 "device-admin-offline");
+    db.EndRemoteControlSession("tx-admin", "device-admin-1",
+                               "device-admin-offline");
+    AdminController db_controller(&auth, nullptr, transmission, &db,
+                                  [](const std::string&, nlohmann::json) {});
+    AdminHttpResponse db_overview = db_controller.Handle(
+        {"GET", "/api/admin/overview?device_search=device-admin-1", "",
+         "cd_admin_session=" + *token});
+    expect(db_overview.status == 200,
+           "overview with device durations returns ok");
+    auto db_overview_body = nlohmann::json::parse(db_overview.body);
+    expect(db_overview_body["devices"].size() == 1,
+           "overview returns filtered online device");
+    expect(db_overview_body["devices"][0]["online_since"] > 0,
+           "overview reports device online_since");
+    expect(db_overview_body["devices"][0].contains("online_duration_seconds"),
+           "overview reports device online duration");
+    expect(db_overview_body["devices"][0].contains("total_online_seconds"),
+           "overview reports device total online duration");
+    expect(db_overview_body["devices"][0].contains("total_control_seconds"),
+           "overview reports device total control duration");
+    expect(db_overview_body["devices"][0].contains("total_controlled_seconds"),
+           "overview reports device total controlled duration");
+    expect(db_overview_body["stats"].contains("online_duration_seconds"),
+           "overview stats include online duration");
+    expect(db_overview_body["stats"].contains("total_control_seconds"),
+           "overview stats include total control duration");
+    expect(db_overview_body["stats"].contains("total_controlled_seconds"),
+           "overview stats include total controlled duration");
+
+    AdminHttpResponse offline_overview = db_controller.Handle(
+        {"GET", "/api/admin/overview?device_search=device-admin-offline", "",
+         "cd_admin_session=" + *token});
+    expect(offline_overview.status == 200,
+           "overview with offline device returns ok");
+    auto offline_body = nlohmann::json::parse(offline_overview.body);
+    expect(offline_body["devices"].size() == 1,
+           "overview keeps offline device in presence list");
+    expect(!offline_body["devices"][0]["online"].get<bool>(),
+           "overview reports offline status");
+    expect(offline_body["devices"][0]["last_online_at"] > 0,
+           "overview reports last online timestamp for offline device");
+    expect(offline_body["devices"][0]["online_duration_seconds"] == 0,
+           "overview reports zero current duration for offline device");
+  }
+  std::filesystem::remove(db_path);
 
   AdminHttpResponse disconnect = controller.Handle(
       {"POST", "/api/admin/sessions/host-1/disconnect", "",
