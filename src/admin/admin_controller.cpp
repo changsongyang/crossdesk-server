@@ -504,6 +504,11 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
           detailsCell.colSpan = 6;
           const details = document.createElement('div');
           details.className = 'detail-grid';
+          const currentOnline = appendDetailItem(
+            details, 'Current online',
+            device.online ? formatDuration(device.online_duration_seconds) : '-');
+          setDurationDataset(currentOnline, 'current-online', device,
+            device.online_duration_seconds, capturedAt);
           const totalOnline = appendDetailItem(
             details, 'Total online', formatDuration(device.total_online_seconds));
           setDurationDataset(totalOnline, 'total', device, device.total_online_seconds, capturedAt);
