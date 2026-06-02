@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <limits>
 #include <map>
 #include <string>
 
@@ -1130,7 +1131,20 @@ AdminHttpResponse AdminController::HandleOverview(
 
   nlohmann::json sessions = nlohmann::json::array();
   size_t sessions_total = 0;
-  if (transmission_) {
+  if (db_) {
+    sessions_total =
+        static_cast<size_t>(db_->CountRemoteControlTransmissions(
+            session_search));
+    for (const auto& session : db_->ListRemoteControlSessions(
+             session_limit, session_offset, session_search)) {
+      sessions.push_back({{"transmission_id", session.transmission_id},
+                          {"host_id", session.host_id},
+                          {"guest_ids", session.guest_ids},
+                          {"participant_count", 1 + session.guest_ids.size()},
+                          {"active", true}});
+    }
+  }
+  if (sessions_total == 0 && transmission_) {
     for (const auto& snapshot : transmission_->GetTransmissionSnapshots(
              session_limit, session_offset, session_search, &sessions_total)) {
       sessions.push_back({{"transmission_id", snapshot.transmission_id},
@@ -1196,7 +1210,22 @@ AdminHttpResponse AdminController::HandleDisconnect(
     transmission_->DisconnectTransmission(transmission_id);
   }
 
-  if (!existed) {
+  bool persisted = false;
+  if (db_) {
+    for (const auto& session : db_->ListRemoteControlSessions(
+             static_cast<size_t>(std::numeric_limits<int>::max()), 0,
+             transmission_id)) {
+      if (session.transmission_id == transmission_id) {
+        persisted = true;
+        break;
+      }
+    }
+    if (persisted) {
+      db_->EndRemoteControlTransmission(transmission_id);
+    }
+  }
+
+  if (!existed && !persisted) {
     return JsonResponse(200, {{"ok", true}, {"already_closed", true}});
   }
   return JsonResponse(200, {{"ok", true}});
@@ -1215,14 +1244,20 @@ nlohmann::json AdminController::BuildStats(size_t online_device_fallback) const 
   if (db_) {
     duration_stats = db_->GetOnlineDurationStats();
   }
+  size_t active_connection_count =
+      transmission_ ? transmission_->GetActiveConnectionCount() : 0;
+  if (db_) {
+    active_connection_count = std::max(
+        active_connection_count,
+        static_cast<size_t>(db_->CountActiveRemoteControlConnections()));
+  }
 
   return {{"online_device_count",
            presence_ ? presence_->GetOnlineDeviceCount()
                      : online_device_fallback},
           {"online_web_client_count",
            presence_ ? presence_->GetOnlineWebClientCount() : 0},
-          {"active_connection_count",
-           transmission_ ? transmission_->GetActiveConnectionCount() : 0},
+          {"active_connection_count", active_connection_count},
           {"online_duration_seconds",
            duration_stats.current_online_seconds},
           {"total_online_seconds", duration_stats.total_online_seconds},

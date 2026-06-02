@@ -1,7 +1,9 @@
 #include "signal_server.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <stdexcept>
 
 #include "common.h"
@@ -35,6 +37,31 @@ void SetAdminResponse(server::connection_ptr con,
     con->append_header(header.first, header.second);
   }
   con->set_body(response.body);
+}
+
+void RestorePersistedRemoteControlSessions(
+    const std::shared_ptr<TransmissionManager>& transmission,
+    DeviceDBManager* db) {
+  if (!transmission || !db) {
+    return;
+  }
+
+  size_t restored_connections = 0;
+  for (const auto& session : db->ListRemoteControlSessions(
+           static_cast<size_t>(std::numeric_limits<int>::max()), 0, "")) {
+    transmission->BindHostToTransmission(session.host_id,
+                                         session.transmission_id);
+    for (const auto& guest_id : session.guest_ids) {
+      if (transmission->BindGuestToTransmission(guest_id,
+                                                session.transmission_id)) {
+        ++restored_connections;
+      }
+    }
+  }
+  if (restored_connections > 0) {
+    LOG_INFO("Restored {} persisted remote control connection(s)",
+             restored_connections);
+  }
 }
 
 }  // namespace
@@ -80,6 +107,8 @@ SignalServer::SignalServer() {
                                                       guest_id);
         }
       });
+  RestorePersistedRemoteControlSessions(transmission_manager_,
+                                        device_db_manager_.get());
   signal_negotiation_ = std::make_unique<SignalNegotiation>(
       transmission_manager_, device_db_manager_.get());
   signal_negotiation_->SetSendMsgCallback(std::bind(&SignalServer::SendMsg,
@@ -150,6 +179,8 @@ SignalServer::SignalServer(uint16_t port, std::string certs_dir,
                                                       guest_id);
         }
       });
+  RestorePersistedRemoteControlSessions(transmission_manager_,
+                                        device_db_manager_.get());
   signal_negotiation_ = std::make_unique<SignalNegotiation>(
       transmission_manager_, device_db_manager_.get());
   signal_negotiation_->SetSendMsgCallback(std::bind(&SignalServer::SendMsg,
@@ -238,15 +269,22 @@ void SignalServer::OnHttp(websocketpp::connection_hdl hdl) {
     if (device_db_manager_) {
       duration_stats = device_db_manager_->GetOnlineDurationStats();
     }
+    size_t active_connection_count =
+        transmission_manager_
+            ? transmission_manager_->GetActiveConnectionCount()
+            : 0;
+    if (device_db_manager_) {
+      active_connection_count = std::max(
+          active_connection_count,
+          static_cast<size_t>(
+              device_db_manager_->CountActiveRemoteControlConnections()));
+    }
     json body = {
         {"online_device_count",
          presence_manager_ ? presence_manager_->GetOnlineDeviceCount() : 0},
         {"online_web_client_count",
          presence_manager_ ? presence_manager_->GetOnlineWebClientCount() : 0},
-        {"active_connection_count",
-         transmission_manager_
-             ? transmission_manager_->GetActiveConnectionCount()
-             : 0},
+        {"active_connection_count", active_connection_count},
         {"online_duration_seconds", duration_stats.current_online_seconds},
         {"total_online_seconds", duration_stats.total_online_seconds},
         {"total_control_seconds", duration_stats.total_control_seconds},

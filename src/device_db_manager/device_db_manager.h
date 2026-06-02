@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 struct DeviceCredential {
@@ -45,6 +46,13 @@ struct OnlineDurationStats {
   int64_t total_controlled_seconds = 0;
 };
 
+struct RemoteControlSessionInfo {
+  std::string transmission_id;
+  std::string host_id;
+  std::vector<std::string> guest_ids;
+  int64_t started_at = 0;
+};
+
 class DeviceDBManager {
  public:
   explicit DeviceDBManager(const std::string& db_path);
@@ -70,6 +78,11 @@ class DeviceDBManager {
   bool EndRemoteControlSession(const std::string& transmission_id,
                                const std::string& host_id,
                                const std::string& guest_id);
+  bool EndRemoteControlTransmission(const std::string& transmission_id);
+  int CountActiveRemoteControlConnections();
+  int CountRemoteControlTransmissions(const std::string& search = "");
+  std::vector<RemoteControlSessionInfo> ListRemoteControlSessions(
+      size_t limit, size_t offset, const std::string& search = "");
   int GetOnlineDeviceCount();
   int CountOnlineDevices(const std::string& search = "");
   int CountDevicePresence(const std::string& search = "",

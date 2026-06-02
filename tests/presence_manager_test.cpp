@@ -235,6 +235,20 @@ int main() {
     expect(restarted_stats.total_controlled_seconds >=
                total_controlled_before_restart,
            "database preserves total controlled duration across restart");
+    expect(restarted_db.CountActiveRemoteControlConnections() == 1,
+           "database preserves active remote control across short restart");
+    expect(restarted_db.CountRemoteControlTransmissions() == 1,
+           "database preserves active transmission across short restart");
+    auto restored_sessions =
+        restarted_db.ListRemoteControlSessions(10, 0, "tx-stale");
+    expect(restored_sessions.size() == 1 &&
+               restored_sessions[0].transmission_id == "tx-stale",
+           "database lists restored remote control session");
+    expect(!restored_sessions.empty() &&
+               contains_id(restored_sessions[0].guest_ids, "device-3"),
+           "database lists restored remote control guest");
+    expect(restarted_db.CountDevicePresence("", "active") == 2,
+           "database active device filter includes restored remote control");
     auto restarted_devices =
         restarted_db.ListDevicePresence(10, 0, "device-2");
     expect(!restarted_devices.empty() && !restarted_devices[0].online,

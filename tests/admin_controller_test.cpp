@@ -232,6 +232,42 @@ int main() {
            "overview returns web clients on web filter");
     expect(web_body["devices"][0]["kind"] == "web",
            "overview marks web client kind");
+
+    auto restored_transmission = std::make_shared<TransmissionManager>();
+    AdminController restored_controller(
+        &auth, nullptr, restored_transmission, &db,
+        [](const std::string&, nlohmann::json) {});
+    AdminHttpResponse restored_stats = restored_controller.Handle(
+        {"GET", "/api/admin/stats", "", "cd_admin_session=" + *token});
+    expect(restored_stats.status == 200,
+           "restored stats with persisted sessions returns ok");
+    auto restored_stats_body = nlohmann::json::parse(restored_stats.body);
+    expect(restored_stats_body["stats"]["active_connection_count"] == 2,
+           "stats reports persisted active connection count");
+
+    AdminHttpResponse restored_sessions = restored_controller.Handle(
+        {"GET",
+         "/api/admin/overview?session_search=tx-admin-live&session_limit=10",
+         "",
+         "cd_admin_session=" + *token});
+    expect(restored_sessions.status == 200,
+           "overview lists persisted sessions without memory state");
+    auto restored_sessions_body =
+        nlohmann::json::parse(restored_sessions.body);
+    expect(restored_sessions_body["sessions_page"]["total"] == 1,
+           "overview reports persisted session total");
+    expect(restored_sessions_body["sessions"].size() == 1 &&
+               restored_sessions_body["sessions"][0]["transmission_id"] ==
+                   "tx-admin-live",
+           "overview returns persisted session row");
+
+    AdminHttpResponse restored_disconnect = restored_controller.Handle(
+        {"POST", "/api/admin/sessions/tx-admin-live/disconnect", "",
+         "cd_admin_session=" + *token});
+    expect(restored_disconnect.status == 200,
+           "disconnect clears persisted session without memory state");
+    expect(db.CountActiveRemoteControlConnections() == 1,
+           "disconnect removes persisted active connection");
   }
   std::filesystem::remove(db_path);
 

@@ -176,6 +176,8 @@ int64_t NowSeconds() {
       .count();
 }
 
+constexpr int64_t kRemoteControlRecoveryWindowSeconds = 120;
+
 }  // namespace
 
 DeviceDBManager::DeviceDBManager(const std::string& db_path) : db_(nullptr) {
@@ -356,56 +358,68 @@ void DeviceDBManager::InitDB() {
     throw std::runtime_error("Failed to initialize server_runtime: " + error);
   }
 
-  int64_t stale_cutoff = std::min(GetRuntimeLastSeen(), NowSeconds());
-  if (stale_cutoff > 0) {
-    std::string cutoff = std::to_string(stale_cutoff);
-    std::string sql_finalize_remote =
-        "UPDATE device_presence SET "
-        "total_control_seconds = total_control_seconds + COALESCE(("
-        "SELECT SUM(MAX(0, " +
-        cutoff +
-        " - started_at)) "
-        "FROM remote_control_sessions "
-        "WHERE " +
-        NormalizedRemoteDeviceExpr("guest_id") +
-        " = device_presence.device_id), 0), "
-        "total_controlled_seconds = total_controlled_seconds + COALESCE(("
-        "SELECT SUM(MAX(0, " +
-        cutoff +
-        " - started_at)) "
-        "FROM remote_control_sessions "
-        "WHERE " +
-        NormalizedRemoteDeviceExpr("host_id") +
-        " = device_presence.device_id), 0) "
-        "WHERE EXISTS ("
-        "SELECT 1 FROM remote_control_sessions "
-        "WHERE " +
-        NormalizedRemoteDeviceExpr("guest_id") +
-        " = device_presence.device_id "
-        "OR " +
-        NormalizedRemoteDeviceExpr("host_id") +
-        " = device_presence.device_id);";
-    if (sqlite3_exec(db_, sql_finalize_remote.c_str(), nullptr, nullptr,
-                     &err_msg) != SQLITE_OK) {
-      std::string error = SqliteExecError(db_, err_msg);
-      LOG_ERROR("Failed to finalize stale remote control sessions: {}",
-                error);
-      sqlite3_free(err_msg);
-      throw std::runtime_error(
-          "Failed to finalize stale remote control sessions: " + error);
+  int64_t now = NowSeconds();
+  int64_t runtime_last_seen = GetRuntimeLastSeen();
+  int64_t stale_cutoff =
+      runtime_last_seen > 0 ? std::min(runtime_last_seen, now) : 0;
+  bool recover_remote_sessions =
+      stale_cutoff > 0 &&
+      now - stale_cutoff <= kRemoteControlRecoveryWindowSeconds;
+
+  if (!recover_remote_sessions) {
+    if (stale_cutoff > 0) {
+      std::string cutoff = std::to_string(stale_cutoff);
+      std::string sql_finalize_remote =
+          "UPDATE device_presence SET "
+          "total_control_seconds = total_control_seconds + COALESCE(("
+          "SELECT SUM(MAX(0, " +
+          cutoff +
+          " - started_at)) "
+          "FROM remote_control_sessions "
+          "WHERE " +
+          NormalizedRemoteDeviceExpr("guest_id") +
+          " = device_presence.device_id), 0), "
+          "total_controlled_seconds = total_controlled_seconds + COALESCE(("
+          "SELECT SUM(MAX(0, " +
+          cutoff +
+          " - started_at)) "
+          "FROM remote_control_sessions "
+          "WHERE " +
+          NormalizedRemoteDeviceExpr("host_id") +
+          " = device_presence.device_id), 0) "
+          "WHERE EXISTS ("
+          "SELECT 1 FROM remote_control_sessions "
+          "WHERE " +
+          NormalizedRemoteDeviceExpr("guest_id") +
+          " = device_presence.device_id "
+          "OR " +
+          NormalizedRemoteDeviceExpr("host_id") +
+          " = device_presence.device_id);";
+      if (sqlite3_exec(db_, sql_finalize_remote.c_str(), nullptr, nullptr,
+                       &err_msg) != SQLITE_OK) {
+        std::string error = SqliteExecError(db_, err_msg);
+        LOG_ERROR("Failed to finalize stale remote control sessions: {}",
+                  error);
+        sqlite3_free(err_msg);
+        throw std::runtime_error(
+            "Failed to finalize stale remote control sessions: " + error);
+      }
     }
+
+    if (sqlite3_exec(db_, "DELETE FROM remote_control_sessions;", nullptr,
+                     nullptr, &err_msg) != SQLITE_OK) {
+      std::string error = SqliteExecError(db_, err_msg);
+      LOG_ERROR("Failed to clear remote_control_sessions: {}", error);
+      sqlite3_free(err_msg);
+      throw std::runtime_error("Failed to clear remote_control_sessions: " +
+                               error);
+    }
+  } else {
+    LOG_INFO("Recovering persisted remote control sessions from last {}s",
+             now - stale_cutoff);
   }
 
-  if (sqlite3_exec(db_, "DELETE FROM remote_control_sessions;", nullptr,
-                   nullptr, &err_msg) != SQLITE_OK) {
-    std::string error = SqliteExecError(db_, err_msg);
-    LOG_ERROR("Failed to clear remote_control_sessions: {}", error);
-    sqlite3_free(err_msg);
-    throw std::runtime_error("Failed to clear remote_control_sessions: " +
-                             error);
-  }
-
-  int64_t offline_time = stale_cutoff > 0 ? stale_cutoff : NowSeconds();
+  int64_t offline_time = stale_cutoff > 0 ? stale_cutoff : now;
   std::string sql_presence_startup_reset = "UPDATE device_presence SET ";
   if (stale_cutoff > 0) {
     std::string cutoff = std::to_string(stale_cutoff);
@@ -1047,6 +1061,158 @@ bool DeviceDBManager::EndRemoteControlSession(
     return false;
   }
   return true;
+}
+
+bool DeviceDBManager::EndRemoteControlTransmission(
+    const std::string& transmission_id) {
+  std::lock_guard<std::recursive_mutex> lock(db_mutex_);
+  if (db_ == nullptr) {
+    LOG_ERROR("Database is not initialized in EndRemoteControlTransmission.");
+    return false;
+  }
+  if (transmission_id.empty()) {
+    return false;
+  }
+
+  const char* sql =
+      "SELECT host_id, guest_id FROM remote_control_sessions "
+      "WHERE transmission_id = ?;";
+  sqlite3_stmt* stmt = nullptr;
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    return false;
+  }
+  sqlite3_bind_text(stmt, 1, transmission_id.c_str(), -1, SQLITE_TRANSIENT);
+
+  std::vector<std::pair<std::string, std::string>> sessions;
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    sessions.push_back({ColumnText(stmt, 0), ColumnText(stmt, 1)});
+  }
+  sqlite3_finalize(stmt);
+
+  bool ok = true;
+  for (const auto& session : sessions) {
+    ok = EndRemoteControlSession(transmission_id, session.first,
+                                 session.second) &&
+         ok;
+  }
+  return ok;
+}
+
+int DeviceDBManager::CountActiveRemoteControlConnections() {
+  std::lock_guard<std::recursive_mutex> lock(db_mutex_);
+  if (db_ == nullptr) {
+    LOG_ERROR(
+        "Database is not initialized in CountActiveRemoteControlConnections.");
+    return 0;
+  }
+
+  const char* sql = "SELECT COUNT(*) FROM remote_control_sessions;";
+  sqlite3_stmt* stmt = nullptr;
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    return 0;
+  }
+
+  int count = 0;
+  if (sqlite3_step(stmt) == SQLITE_ROW) {
+    count = sqlite3_column_int(stmt, 0);
+  }
+  sqlite3_finalize(stmt);
+  return count;
+}
+
+int DeviceDBManager::CountRemoteControlTransmissions(
+    const std::string& search) {
+  std::lock_guard<std::recursive_mutex> lock(db_mutex_);
+  if (db_ == nullptr) {
+    LOG_ERROR("Database is not initialized in CountRemoteControlTransmissions.");
+    return 0;
+  }
+
+  std::string sql =
+      "SELECT COUNT(*) FROM ("
+      "SELECT transmission_id, host_id FROM remote_control_sessions ";
+  if (!search.empty()) {
+    sql +=
+        "WHERE transmission_id LIKE ? ESCAPE '\\' "
+        "OR host_id LIKE ? ESCAPE '\\' "
+        "OR guest_id LIKE ? ESCAPE '\\' ";
+  }
+  sql += "GROUP BY transmission_id, host_id);";
+
+  sqlite3_stmt* stmt = nullptr;
+  if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &stmt, nullptr) !=
+      SQLITE_OK) {
+    return 0;
+  }
+  if (!search.empty()) {
+    std::string pattern = "%" + EscapeLikePattern(search) + "%";
+    sqlite3_bind_text(stmt, 1, pattern.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, pattern.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, pattern.c_str(), -1, SQLITE_TRANSIENT);
+  }
+
+  int count = 0;
+  if (sqlite3_step(stmt) == SQLITE_ROW) {
+    count = sqlite3_column_int(stmt, 0);
+  }
+  sqlite3_finalize(stmt);
+  return count;
+}
+
+std::vector<RemoteControlSessionInfo>
+DeviceDBManager::ListRemoteControlSessions(size_t limit, size_t offset,
+                                           const std::string& search) {
+  std::lock_guard<std::recursive_mutex> lock(db_mutex_);
+  std::vector<RemoteControlSessionInfo> result;
+  if (db_ == nullptr) {
+    LOG_ERROR("Database is not initialized in ListRemoteControlSessions.");
+    return result;
+  }
+
+  std::string sql =
+      "SELECT transmission_id, host_id, MIN(started_at), "
+      "GROUP_CONCAT(guest_id) "
+      "FROM remote_control_sessions ";
+  if (!search.empty()) {
+    sql +=
+        "WHERE transmission_id LIKE ? ESCAPE '\\' "
+        "OR host_id LIKE ? ESCAPE '\\' "
+        "OR guest_id LIKE ? ESCAPE '\\' ";
+  }
+  sql +=
+      "GROUP BY transmission_id, host_id "
+      "ORDER BY MIN(started_at) DESC, transmission_id ASC "
+      "LIMIT ? OFFSET ?;";
+
+  sqlite3_stmt* stmt = nullptr;
+  if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &stmt, nullptr) !=
+      SQLITE_OK) {
+    return result;
+  }
+
+  int bind_index = 1;
+  if (!search.empty()) {
+    std::string pattern = "%" + EscapeLikePattern(search) + "%";
+    sqlite3_bind_text(stmt, bind_index++, pattern.c_str(), -1,
+                      SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, bind_index++, pattern.c_str(), -1,
+                      SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, bind_index++, pattern.c_str(), -1,
+                      SQLITE_TRANSIENT);
+  }
+  sqlite3_bind_int64(stmt, bind_index++, static_cast<sqlite3_int64>(limit));
+  sqlite3_bind_int64(stmt, bind_index++, static_cast<sqlite3_int64>(offset));
+
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    RemoteControlSessionInfo info;
+    info.transmission_id = ColumnText(stmt, 0);
+    info.host_id = ColumnText(stmt, 1);
+    info.started_at = sqlite3_column_int64(stmt, 2);
+    info.guest_ids = SplitCommaSeparatedIds(ColumnText(stmt, 3));
+    result.push_back(info);
+  }
+  sqlite3_finalize(stmt);
+  return result;
 }
 
 int DeviceDBManager::GetOnlineDeviceCount() {
