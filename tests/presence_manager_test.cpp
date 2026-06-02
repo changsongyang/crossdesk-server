@@ -1,10 +1,12 @@
 #include "presence_manager.h"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <iostream>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "device_db_manager.h"
 
@@ -18,6 +20,10 @@ int main() {
       std::cerr << "FAIL: " << message << std::endl;
       ++failures;
     }
+  };
+  auto contains_id = [](const std::vector<std::string>& ids,
+                        const std::string& id) {
+    return std::find(ids.begin(), ids.end(), id) != ids.end();
   };
 
   expect(presence.GetOnlineDeviceCount() == 0,
@@ -150,9 +156,13 @@ int main() {
     expect(active_devices[0].device_id == "device-1" &&
                active_devices[0].active_control_count == 1,
            "presence list reports active control count");
+    expect(contains_id(active_devices[0].active_control_targets, "device-2"),
+           "presence list reports active control target id");
     expect(active_devices[1].device_id == "device-2" &&
                active_devices[1].active_controlled_count == 1,
            "presence list reports active controlled count");
+    expect(contains_id(active_devices[1].active_controlled_by, "device-1"),
+           "presence list reports active controlled-by peer id");
     db.SetDeviceOnline("device-4", true);
     expect(db.StartRemoteControlSession("tx-clone", "device-2", "C-device-4"),
            "clone remote control session starts");
@@ -161,6 +171,10 @@ int main() {
     expect(clone_control.size() == 1 &&
                clone_control[0].active_control_count == 1,
            "presence list maps clone guest control count to base device");
+    expect(!clone_control.empty() &&
+               contains_id(clone_control[0].active_control_targets,
+                           "device-2"),
+           "presence list maps clone guest control target to base device");
     std::this_thread::sleep_for(std::chrono::seconds(1));
     expect(db.EndRemoteControlSession("tx-clone", "device-2", "C-device-4"),
            "clone remote control session ends");

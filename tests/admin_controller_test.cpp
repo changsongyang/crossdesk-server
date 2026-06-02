@@ -1,10 +1,12 @@
 #include "admin_controller.h"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <iostream>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "admin_auth.h"
 #include "device_db_manager.h"
@@ -18,6 +20,10 @@ int main() {
       std::cerr << "FAIL: " << message << std::endl;
       ++failures;
     }
+  };
+  auto contains_id = [](const std::vector<std::string>& ids,
+                        const std::string& id) {
+    return std::find(ids.begin(), ids.end(), id) != ids.end();
   };
 
   expect(AdminController::IsAdminRoute("/admin"), "/admin is admin route");
@@ -195,9 +201,19 @@ int main() {
            "overview applies device sort order");
     expect(active_body["devices"][0]["active_controlled_count"] == 2,
            "overview reports active controlled count");
+    auto first_controlled_by =
+        active_body["devices"][0]["active_controlled_by"]
+            .get<std::vector<std::string>>();
+    expect(contains_id(first_controlled_by, "device-admin-offline") &&
+               contains_id(first_controlled_by, "device-admin-control"),
+           "overview reports active controlled-by peer ids");
     expect(active_body["devices"][1]["id"] == "device-admin-control" &&
                active_body["devices"][1]["active_control_count"] == 1,
            "overview maps clone guest control count to base device");
+    auto clone_targets = active_body["devices"][1]["active_control_targets"]
+                             .get<std::vector<std::string>>();
+    expect(contains_id(clone_targets, "device-admin-1"),
+           "overview maps clone guest control target to base device");
     expect(active_body["devices"][2]["active_control_count"] == 1,
            "overview reports active control count");
 

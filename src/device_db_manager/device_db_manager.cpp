@@ -51,6 +51,27 @@ std::string NormalizeRemoteDeviceId(const std::string& device_id) {
   return device_id.rfind("C-", 0) == 0 ? device_id.substr(2) : device_id;
 }
 
+std::vector<std::string> SplitCommaSeparatedIds(const std::string& value) {
+  std::vector<std::string> result;
+  size_t start = 0;
+  while (start <= value.size()) {
+    size_t end = value.find(',', start);
+    std::string item =
+        value.substr(start, end == std::string::npos ? std::string::npos
+                                                     : end - start);
+    if (!item.empty()) {
+      result.push_back(item);
+    }
+    if (end == std::string::npos) {
+      break;
+    }
+    start = end + 1;
+  }
+  std::sort(result.begin(), result.end());
+  result.erase(std::unique(result.begin(), result.end()), result.end());
+  return result;
+}
+
 std::string NormalizedRemoteDeviceExpr(const std::string& column) {
   return "CASE WHEN " + column + " LIKE 'C-%' THEN substr(" + column +
          ", 3) ELSE " + column + " END";
@@ -1271,6 +1292,22 @@ std::vector<OnlineDeviceInfo> DeviceDBManager::ListDevicePresence(
       " = device_presence.device_id), 0) "
       "AS active_controlled_count, "
       "COALESCE(("
+      "SELECT GROUP_CONCAT(DISTINCT " +
+      NormalizedRemoteDeviceExpr("host_id") +
+      ") FROM remote_control_sessions "
+      "WHERE " +
+      NormalizedRemoteDeviceExpr("guest_id") +
+      " = device_presence.device_id), '') "
+      "AS active_control_targets, "
+      "COALESCE(("
+      "SELECT GROUP_CONCAT(DISTINCT " +
+      NormalizedRemoteDeviceExpr("guest_id") +
+      ") FROM remote_control_sessions "
+      "WHERE " +
+      NormalizedRemoteDeviceExpr("host_id") +
+      " = device_presence.device_id), '') "
+      "AS active_controlled_by, "
+      "COALESCE(("
       "SELECT COUNT(*) FROM remote_control_sessions "
       "WHERE " +
       NormalizedRemoteDeviceExpr("guest_id") +
@@ -1314,6 +1351,8 @@ std::vector<OnlineDeviceInfo> DeviceDBManager::ListDevicePresence(
     info.total_controlled_seconds = sqlite3_column_int64(stmt, 7);
     info.active_control_count = sqlite3_column_int64(stmt, 8);
     info.active_controlled_count = sqlite3_column_int64(stmt, 9);
+    info.active_control_targets = SplitCommaSeparatedIds(ColumnText(stmt, 10));
+    info.active_controlled_by = SplitCommaSeparatedIds(ColumnText(stmt, 11));
     result.push_back(info);
   }
   sqlite3_finalize(stmt);

@@ -180,6 +180,7 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
     .detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px 16px; }
     .detail-grid span { color: #667085; display: block; font-size: 12px; }
     .detail-grid strong { display: block; font-size: 14px; margin-top: 2px; }
+    .peer-list { word-break: break-all; }
     .sort-order { min-width: 62px; }
     .pager { display: flex; gap: 8px; align-items: center; justify-content: flex-end; margin-top: 12px; color: #667085; font-size: 13px; flex-wrap: wrap; }
     .status { color: #067647; font-weight: 600; }
@@ -417,12 +418,18 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
     }
 
     function sessionSummary(device) {
-      const controlling = Number(device.active_control_count) || 0;
-      const controlled = Number(device.active_controlled_count) || 0;
+      const targets = Array.isArray(device.active_control_targets) ? device.active_control_targets : [];
+      const controlledBy = Array.isArray(device.active_controlled_by) ? device.active_controlled_by : [];
+      const controlling = Number(device.active_control_count) || targets.length;
+      const controlled = Number(device.active_controlled_count) || controlledBy.length;
       const parts = [];
       if (controlling > 0) parts.push(`controlling ${controlling}`);
-      if (controlled > 0) parts.push(`controlled ${controlled}`);
+      if (controlled > 0) parts.push(`controlled by ${controlled}`);
       return parts.join(', ') || '-';
+    }
+
+    function peerList(value) {
+      return Array.isArray(value) && value.length ? value.join(', ') : '-';
     }
 
     function appendDetailItem(parent, label, value, className, dataset) {
@@ -498,6 +505,8 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
           appendDetailItem(details, 'Online since', formatTime(device.online_since));
           appendDetailItem(details, 'Last online', formatTime(device.online ? 0 : device.updated_at));
           appendDetailItem(details, 'Active session', sessionSummary(device));
+          appendDetailItem(details, 'Controlling', peerList(device.active_control_targets), 'peer-list');
+          appendDetailItem(details, 'Controlled by', peerList(device.active_controlled_by), 'peer-list');
           detailsCell.appendChild(details);
           detailsRow.appendChild(detailsCell);
           body.appendChild(detailsRow);
@@ -1006,6 +1015,10 @@ AdminHttpResponse AdminController::HandleOverview(
                          {"active_control_count", active_control_count},
                          {"active_controlled_count",
                           active_controlled_count},
+                         {"active_control_targets",
+                          device.active_control_targets},
+                         {"active_controlled_by",
+                          device.active_controlled_by},
                          {"active_session_count",
                           active_control_count +
                               active_controlled_count}});

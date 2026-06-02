@@ -32,6 +32,8 @@ struct OnlineDeviceInfo {
   int64_t total_controlled_seconds = 0;
   int64_t active_control_count = 0;
   int64_t active_controlled_count = 0;
+  std::vector<std::string> active_control_targets;
+  std::vector<std::string> active_controlled_by;
 };
 
 struct OnlineDurationStats {
