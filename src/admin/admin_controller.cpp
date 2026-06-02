@@ -138,28 +138,29 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
   <title>CrossDesk Admin</title>
   <style>
     :root { color-scheme: light; font-family: "Segoe UI", Arial, sans-serif; }
-    body { margin: 0; background: #f4f6f8; color: #17202a; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f4f6f8; color: #17202a; -webkit-text-size-adjust: 100%; }
     header { background: #ffffff; border-bottom: 1px solid #d9dee5; padding: 14px 24px; display: flex; align-items: center; justify-content: space-between; }
     h1 { font-size: 20px; margin: 0; }
     main { padding: 24px; max-width: 1280px; margin: 0 auto; }
-    button { border: 1px solid #9aa7b5; background: #ffffff; border-radius: 6px; padding: 8px 12px; cursor: pointer; }
+    button { border: 1px solid #9aa7b5; background: #ffffff; border-radius: 6px; cursor: pointer; font: inherit; min-height: 38px; padding: 8px 12px; }
     button.primary { background: #1264a3; color: #ffffff; border-color: #1264a3; }
     button.danger { background: #b42318; color: #ffffff; border-color: #b42318; }
     button:disabled { opacity: .6; cursor: not-allowed; }
-    input { border: 1px solid #b8c2cc; border-radius: 6px; padding: 9px 10px; }
+    input { border: 1px solid #b8c2cc; border-radius: 6px; font: inherit; min-height: 38px; padding: 9px 10px; }
     .login { min-height: 70vh; display: grid; place-items: center; }
-    .panel { background: #ffffff; border: 1px solid #d9dee5; border-radius: 8px; padding: 18px; }
+    .panel { background: #ffffff; border: 1px solid #d9dee5; border-radius: 8px; min-width: 0; padding: 18px; }
     .login .panel { width: min(360px, calc(100vw - 40px)); display: grid; gap: 12px; }
     .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 18px; }
-    .metric { background: #ffffff; border: 1px solid #d9dee5; border-radius: 8px; padding: 16px; }
+    .metric { background: #ffffff; border: 1px solid #d9dee5; border-radius: 8px; min-width: 0; padding: 16px; }
     .metric span { color: #667085; font-size: 13px; }
     .metric strong { display: block; font-size: 30px; margin-top: 6px; }
-    .grid { display: grid; grid-template-columns: 1.1fr .9fr; gap: 18px; align-items: start; }
-    .toolbar { display: flex; gap: 10px; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); gap: 18px; align-items: start; }
+    .toolbar { display: flex; gap: 10px; justify-content: space-between; align-items: center; margin-bottom: 12px; min-width: 0; }
     .toolbar h2 { font-size: 18px; margin: 0; }
-    .actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
-    select { border: 1px solid #b8c2cc; border-radius: 6px; padding: 9px 10px; background: #ffffff; }
-    .table-wrap { overflow-x: auto; }
+    .actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; min-width: 0; }
+    select { border: 1px solid #b8c2cc; border-radius: 6px; font: inherit; min-height: 38px; padding: 9px 10px; background: #ffffff; }
+    .table-wrap { max-width: 100%; overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; font-size: 14px; }
     th, td { border-bottom: 1px solid #edf0f3; padding: 10px 8px; text-align: left; vertical-align: top; }
     th { color: #667085; font-weight: 600; }
@@ -169,6 +170,7 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
     .presence-table th:nth-child(1) { min-width: 190px; }
     .presence-table th:nth-child(3) { min-width: 150px; }
     .presence-table th:nth-child(5) { min-width: 130px; }
+    .sessions-table td:nth-child(1), .sessions-table td:nth-child(2) { word-break: break-all; }
     .device-id { font-weight: 600; word-break: break-all; }
     .subline { display: block; color: #667085; font-size: 12px; margin-top: 3px; }
     .badge { border-radius: 999px; display: inline-flex; align-items: center; font-size: 12px; font-weight: 700; line-height: 1; padding: 5px 8px; }
@@ -189,7 +191,57 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
     .error { color: #b42318; min-height: 20px; }
     .empty { color: #667085; text-align: center; padding: 16px 8px; }
     .hidden { display: none; }
-    @media (max-width: 860px) { .metrics, .grid { grid-template-columns: 1fr; } header { padding: 12px 16px; } main { padding: 16px; } .toolbar { align-items: stretch; flex-direction: column; } .actions { justify-content: flex-start; } input, select { max-width: 100%; } }
+    @media (max-width: 860px) {
+      header { padding: 12px 16px; }
+      main { padding: 16px; }
+      .metrics, .grid { grid-template-columns: 1fr; }
+      .toolbar { align-items: stretch; flex-direction: column; gap: 8px; }
+      .actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); justify-content: stretch; width: 100%; }
+      .actions input, .actions select, .actions button { min-width: 0; width: 100%; }
+      .actions .error { grid-column: 1 / -1; }
+      #dashboard-view > .toolbar .actions { grid-template-columns: 1fr; }
+      .sort-order { min-width: 0; }
+    }
+    @media (max-width: 640px) {
+      header { gap: 12px; }
+      h1 { font-size: 18px; }
+      button, input, select { min-height: 44px; }
+      main { padding: 12px; }
+      .login { align-items: start; min-height: calc(100vh - 58px); padding-top: 32px; }
+      .login .panel { width: 100%; }
+      .panel { padding: 14px; }
+      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }
+      .metric { padding: 12px; }
+      .metric strong { font-size: 24px; margin-top: 4px; }
+      .grid { gap: 12px; }
+      .segments { margin: 0 -2px 12px; padding-bottom: 6px; }
+      .segments button { min-height: 40px; padding: 8px 10px; }
+      .table-wrap { overflow: visible; }
+      table, tbody, tr, td { display: block; width: 100%; }
+      thead { display: none; }
+      tbody tr { background: #ffffff; border: 1px solid #d9dee5; border-radius: 8px; margin-bottom: 10px; padding: 10px 12px; }
+      tbody tr.device-row.expanded { border-bottom-left-radius: 0; border-bottom-right-radius: 0; margin-bottom: 0; }
+      tbody tr.details-row { background: #f9fafb; border-top: 0; border-top-left-radius: 0; border-top-right-radius: 0; margin-top: 0; padding: 0 12px 12px; }
+      tbody td { align-items: start; border-bottom: 0; display: grid; gap: 8px; grid-template-columns: minmax(92px, 34%) minmax(0, 1fr); padding: 8px 0; }
+      tbody td::before { color: #667085; content: attr(data-label); font-size: 12px; font-weight: 600; }
+      tbody td.empty { display: block; padding: 14px 0; text-align: center; }
+      tbody td.empty::before, tbody tr.details-row td::before { content: none; display: none; }
+      tbody tr.details-row td { background: transparent; display: block; padding: 0; }
+      tbody td[data-label="Action"] { display: block; }
+      tbody td[data-label="Action"]::before { content: none; display: none; }
+      tbody td[data-label="Action"] button { width: 100%; }
+      .detail-grid { grid-template-columns: 1fr; gap: 8px; }
+      .pager { justify-content: space-between; }
+      .pager span { flex: 1; text-align: center; }
+      .pager button { min-width: 96px; }
+    }
+    @media (max-width: 420px) {
+      .actions { grid-template-columns: 1fr; }
+      .metrics { grid-template-columns: 1fr; }
+      .pager { display: grid; grid-template-columns: 1fr 1fr; width: 100%; }
+      .pager span { grid-column: 1 / -1; order: -1; text-align: left; }
+      .pager button { min-width: 0; width: 100%; }
+    }
   </style>
 </head>
 <body>
@@ -278,10 +330,12 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
               </select>
             </div>
           </div>
-          <table>
-            <thead><tr><th>Transmission</th><th>Participants</th><th>Action</th></tr></thead>
-            <tbody id="sessions"></tbody>
-          </table>
+          <div class="table-wrap">
+            <table class="sessions-table">
+              <thead><tr><th>Transmission</th><th>Participants</th><th>Action</th></tr></thead>
+              <tbody id="sessions"></tbody>
+            </table>
+          </div>
           <div class="pager">
             <button id="session-prev" type="button">Previous</button>
             <span id="session-page-info">0-0 of 0</span>
@@ -406,6 +460,11 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
       return element;
     }
 
+    function labelCell(cell, label) {
+      cell.dataset.label = label;
+      return cell;
+    }
+
     function appendBadge(parent, value, className) {
       return appendText(parent, 'span', value, `badge ${className}`);
     }
@@ -463,31 +522,38 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
       const capturedAt = Math.floor(Date.now() / 1000);
       devices.forEach(device => {
         const activeSessions = Number(device.active_session_count) || 0;
+        const isExpanded = expandedDevices.has(device.id);
         const row = document.createElement('tr');
+        row.className = isExpanded ? 'device-row expanded' : 'device-row';
         const clientCell = document.createElement('td');
+        labelCell(clientCell, 'Client');
         appendText(clientCell, 'div', device.id, 'device-id');
         appendText(clientCell, 'span', device.kind === 'web' ? 'web client' : 'device', 'subline');
         row.appendChild(clientCell);
 
         const statusCell = document.createElement('td');
+        labelCell(statusCell, 'State');
         appendBadge(statusCell, device.online ? 'online' : 'offline',
           device.online ? 'online' : 'offline');
         if (activeSessions > 0) appendBadge(statusCell, 'remote', 'active');
         row.appendChild(statusCell);
 
         const timeCell = document.createElement('td');
+        labelCell(timeCell, 'Seen');
         appendText(timeCell, 'div', formatTime(device.online ? device.online_since : device.updated_at));
         appendText(timeCell, 'span', device.online ? 'online since' : 'last online', 'muted');
         row.appendChild(timeCell);
 
         const currentCell = appendText(row, 'td', device.online ? formatDuration(device.online_duration_seconds) : '-');
+        labelCell(currentCell, 'Current online');
         setDurationDataset(currentCell, 'current', device, device.online_duration_seconds, capturedAt);
-        appendText(row, 'td', sessionSummary(device));
+        labelCell(appendText(row, 'td', sessionSummary(device)), 'Session');
 
         const actionCell = document.createElement('td');
+        labelCell(actionCell, 'Action');
         const detailButton = document.createElement('button');
         detailButton.type = 'button';
-        detailButton.textContent = expandedDevices.has(device.id) ? 'Hide' : 'Details';
+        detailButton.textContent = isExpanded ? 'Hide' : 'Details';
         detailButton.addEventListener('click', () => {
           if (expandedDevices.has(device.id)) expandedDevices.delete(device.id);
           else expandedDevices.add(device.id);
@@ -497,7 +563,7 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
         row.appendChild(actionCell);
         body.appendChild(row);
 
-        if (expandedDevices.has(device.id)) {
+        if (isExpanded) {
           const detailsRow = document.createElement('tr');
           detailsRow.className = 'details-row';
           const detailsCell = document.createElement('td');
@@ -559,17 +625,21 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
       sessions.forEach(session => {
         const guests = session.guest_ids.join(', ') || '-';
         const row = document.createElement('tr');
+        row.className = 'session-row';
         const transmissionCell = document.createElement('td');
+        labelCell(transmissionCell, 'Transmission');
         appendText(transmissionCell, 'div', session.transmission_id);
         appendText(transmissionCell, 'span', `host ${session.host_id}`, 'muted');
         row.appendChild(transmissionCell);
 
         const participantsCell = document.createElement('td');
+        labelCell(participantsCell, 'Participants');
         appendText(participantsCell, 'div', session.participant_count);
         appendText(participantsCell, 'span', guests, 'muted');
         row.appendChild(participantsCell);
 
         const actionCell = document.createElement('td');
+        labelCell(actionCell, 'Action');
         const button = document.createElement('button');
         button.className = 'danger';
         button.textContent = 'Disconnect';
