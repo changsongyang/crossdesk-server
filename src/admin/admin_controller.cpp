@@ -410,11 +410,14 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
       return appendText(parent, 'span', value, `badge ${className}`);
     }
 
-    function setDurationDataset(cell, kind, device, base, capturedAt) {
+    function setDurationDataset(cell, kind, device, base, capturedAt, running, rate) {
+      const isRunning = typeof running === 'boolean' ? running : device.online;
       cell.dataset.duration = kind;
       cell.dataset.online = device.online ? '1' : '0';
+      cell.dataset.running = isRunning ? '1' : '0';
       cell.dataset.base = String(base || 0);
       cell.dataset.capturedAt = String(capturedAt);
+      cell.dataset.rate = String(rate || 1);
     }
 
     function sessionSummary(device) {
@@ -430,6 +433,10 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
 
     function peerList(value) {
       return Array.isArray(value) && value.length ? value.join(', ') : '-';
+    }
+
+    function activeDuration(value, activeCount) {
+      return Number(activeCount) > 0 ? formatDuration(value) : '-';
     }
 
     function appendDetailItem(parent, label, value, className, dataset) {
@@ -500,8 +507,30 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
           const totalOnline = appendDetailItem(
             details, 'Total online', formatDuration(device.total_online_seconds));
           setDurationDataset(totalOnline, 'total', device, device.total_online_seconds, capturedAt);
-          appendDetailItem(details, 'Total control', formatDuration(device.total_control_seconds));
-          appendDetailItem(details, 'Total controlled', formatDuration(device.total_controlled_seconds));
+          const activeControlCount = Number(device.active_control_count) || 0;
+          const activeControlledCount = Number(device.active_controlled_count) || 0;
+          const currentControl = appendDetailItem(
+            details, 'Current control',
+            activeDuration(device.current_control_seconds, activeControlCount));
+          setDurationDataset(currentControl, 'current-control', device,
+            device.current_control_seconds, capturedAt,
+            activeControlCount > 0, activeControlCount);
+          const totalControl = appendDetailItem(
+            details, 'Total control', formatDuration(device.total_control_seconds));
+          setDurationDataset(totalControl, 'total-control', device,
+            device.total_control_seconds, capturedAt,
+            activeControlCount > 0, activeControlCount);
+          const currentControlled = appendDetailItem(
+            details, 'Current controlled',
+            activeDuration(device.current_controlled_seconds, activeControlledCount));
+          setDurationDataset(currentControlled, 'current-controlled', device,
+            device.current_controlled_seconds, capturedAt,
+            activeControlledCount > 0, activeControlledCount);
+          const totalControlled = appendDetailItem(
+            details, 'Total controlled', formatDuration(device.total_controlled_seconds));
+          setDurationDataset(totalControlled, 'total-controlled', device,
+            device.total_controlled_seconds, capturedAt,
+            activeControlledCount > 0, activeControlledCount);
           appendDetailItem(details, 'Online since', formatTime(device.online_since));
           appendDetailItem(details, 'Last online', formatTime(device.online ? 0 : device.updated_at));
           appendDetailItem(details, 'Active session', sessionSummary(device));
@@ -624,17 +653,12 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
 
     function updateLiveDurations() {
       const now = Math.floor(Date.now() / 1000);
-      document.querySelectorAll('[data-duration="current"]').forEach(cell => {
-        if (cell.dataset.online !== '1') return;
+      document.querySelectorAll('[data-duration]').forEach(cell => {
+        if (cell.dataset.running !== '1') return;
         const base = Number(cell.dataset.base) || 0;
         const capturedAt = Number(cell.dataset.capturedAt) || now;
-        cell.textContent = formatDuration(base + now - capturedAt);
-      });
-      document.querySelectorAll('[data-duration="total"]').forEach(cell => {
-        if (cell.dataset.online !== '1') return;
-        const base = Number(cell.dataset.base) || 0;
-        const capturedAt = Number(cell.dataset.capturedAt) || now;
-        cell.textContent = formatDuration(base + now - capturedAt);
+        const rate = Number(cell.dataset.rate) || 1;
+        cell.textContent = formatDuration(base + rate * (now - capturedAt));
       });
       if (statsSnapshot.capturedAt > 0) {
         const elapsed = now - statsSnapshot.capturedAt;
@@ -1012,6 +1036,10 @@ AdminHttpResponse AdminController::HandleOverview(
                           device.total_control_seconds},
                          {"total_controlled_seconds",
                           device.total_controlled_seconds},
+                         {"current_control_seconds",
+                          device.current_control_seconds},
+                         {"current_controlled_seconds",
+                          device.current_controlled_seconds},
                          {"active_control_count", active_control_count},
                          {"active_controlled_count",
                           active_controlled_count},

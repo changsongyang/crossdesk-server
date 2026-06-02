@@ -151,6 +151,11 @@ int main() {
            "overview reports device total control duration");
     expect(db_overview_body["devices"][0].contains("total_controlled_seconds"),
            "overview reports device total controlled duration");
+    expect(db_overview_body["devices"][0].contains("current_control_seconds"),
+           "overview reports device current control duration");
+    expect(db_overview_body["devices"][0].contains(
+               "current_controlled_seconds"),
+           "overview reports device current controlled duration");
     expect(db_overview_body["stats"].contains("online_duration_seconds"),
            "overview stats include online duration");
     expect(db_overview_body["stats"].contains("total_control_seconds"),

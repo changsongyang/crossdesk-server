@@ -156,11 +156,15 @@ int main() {
     expect(active_devices[0].device_id == "device-1" &&
                active_devices[0].active_control_count == 1,
            "presence list reports active control count");
+    expect(active_devices[0].current_control_seconds >= 1,
+           "presence list reports current control duration");
     expect(contains_id(active_devices[0].active_control_targets, "device-2"),
            "presence list reports active control target id");
     expect(active_devices[1].device_id == "device-2" &&
                active_devices[1].active_controlled_count == 1,
            "presence list reports active controlled count");
+    expect(active_devices[1].current_controlled_seconds >= 1,
+           "presence list reports current controlled duration");
     expect(contains_id(active_devices[1].active_controlled_by, "device-1"),
            "presence list reports active controlled-by peer id");
     db.SetDeviceOnline("device-4", true);

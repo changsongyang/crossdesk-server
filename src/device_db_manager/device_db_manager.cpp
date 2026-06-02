@@ -1280,6 +1280,20 @@ std::vector<OnlineDeviceInfo> DeviceDBManager::ListDevicePresence(
       " = device_presence.device_id), 0) "
       "AS total_controlled_seconds, "
       "COALESCE(("
+      "SELECT SUM(MAX(0, CAST(strftime('%s','now') AS INTEGER) - started_at)) "
+      "FROM remote_control_sessions "
+      "WHERE " +
+      NormalizedRemoteDeviceExpr("guest_id") +
+      " = device_presence.device_id), 0) "
+      "AS current_control_seconds, "
+      "COALESCE(("
+      "SELECT SUM(MAX(0, CAST(strftime('%s','now') AS INTEGER) - started_at)) "
+      "FROM remote_control_sessions "
+      "WHERE " +
+      NormalizedRemoteDeviceExpr("host_id") +
+      " = device_presence.device_id), 0) "
+      "AS current_controlled_seconds, "
+      "COALESCE(("
       "SELECT COUNT(*) FROM remote_control_sessions "
       "WHERE " +
       NormalizedRemoteDeviceExpr("guest_id") +
@@ -1349,10 +1363,12 @@ std::vector<OnlineDeviceInfo> DeviceDBManager::ListDevicePresence(
     info.total_online_seconds = sqlite3_column_int64(stmt, 5);
     info.total_control_seconds = sqlite3_column_int64(stmt, 6);
     info.total_controlled_seconds = sqlite3_column_int64(stmt, 7);
-    info.active_control_count = sqlite3_column_int64(stmt, 8);
-    info.active_controlled_count = sqlite3_column_int64(stmt, 9);
-    info.active_control_targets = SplitCommaSeparatedIds(ColumnText(stmt, 10));
-    info.active_controlled_by = SplitCommaSeparatedIds(ColumnText(stmt, 11));
+    info.current_control_seconds = sqlite3_column_int64(stmt, 8);
+    info.current_controlled_seconds = sqlite3_column_int64(stmt, 9);
+    info.active_control_count = sqlite3_column_int64(stmt, 10);
+    info.active_controlled_count = sqlite3_column_int64(stmt, 11);
+    info.active_control_targets = SplitCommaSeparatedIds(ColumnText(stmt, 12));
+    info.active_controlled_by = SplitCommaSeparatedIds(ColumnText(stmt, 13));
     result.push_back(info);
   }
   sqlite3_finalize(stmt);
