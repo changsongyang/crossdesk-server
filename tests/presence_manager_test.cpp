@@ -128,6 +128,10 @@ int main() {
            "presence count supports online filter");
     expect(db.CountDevicePresence("", "offline") == 1,
            "presence count supports offline filter");
+    auto presence_counts = db.CountDevicePresenceByFilters();
+    expect(presence_counts.all == 3 && presence_counts.online == 2 &&
+               presence_counts.offline == 1 && presence_counts.web == 1,
+           "presence count aggregation reports all filters");
     auto sorted_presence =
         db.ListDevicePresence(10, 0, "", "all", "device_id", "asc");
     expect(!sorted_presence.empty() &&
@@ -149,6 +153,9 @@ int main() {
     std::this_thread::sleep_for(std::chrono::seconds(1));
     expect(db.CountDevicePresence("", "active") == 2,
            "presence count supports active remote filter");
+    auto active_presence_counts = db.CountDevicePresenceByFilters();
+    expect(active_presence_counts.active == 2,
+           "presence count aggregation reports active remote filter");
     auto active_devices =
         db.ListDevicePresence(10, 0, "", "active", "device_id", "asc");
     expect(active_devices.size() == 2,

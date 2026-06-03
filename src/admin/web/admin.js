@@ -1,0 +1,895 @@
+    const loginView = document.getElementById('login-view');
+    const dashboardView = document.getElementById('dashboard-view');
+    const logoutButton = document.getElementById('logout');
+    const state = {
+      devices: {
+        limit: 10,
+        offset: 0,
+        total: 0,
+        search: '',
+        filter: 'online',
+        sort: 'status',
+        order: 'desc'
+      },
+      sessions: {limit: 10, offset: 0, total: 0, search: ''}
+    };
+    const searchTimers = {devices: null, sessions: null};
+    const expandedDevices = new Set();
+    let currentDevices = [];
+    let listTimer = null;
+    let durationTimer = null;
+    let listRefreshSerial = 0;
+    let statsSnapshot = {
+      onlineDuration: 0,
+      onlineCount: 0,
+      controlDuration: 0,
+      controlledDuration: 0,
+      activeConnections: 0,
+      capturedAt: 0
+    };
+    const MAP_NS = 'http://www.w3.org/2000/svg';
+    const CHINA_MAP_URL = '/admin/assets/china-provinces.json';
+    const MAP_WIDTH = 760;
+    const MAP_HEIGHT = 560;
+    const MAP_PADDING = 24;
+    const GEO_COLORS = ['#eef4f7', '#d7edf2', '#a9dce7', '#6fc1d3', '#2f95bd', '#1264a3'];
+    const PROVINCE_LABEL_OFFSETS = {
+      beijing: [0, -9],
+      tianjin: [20, 12],
+      shanghai: [20, 4],
+      chongqing: [-12, 12],
+      hongkong: [22, 16],
+      macau: [-22, 18],
+      hainan: [10, 16]
+    };
+    let geoMapReady = false;
+    let geoMapDataPromise = null;
+    let geoFeatures = [];
+    let geoFeatureByKey = new Map();
+    let geoProvinceCounts = new Map();
+    let geoTotalUsers = 0;
+
+    function showDashboard() {
+      loginView.classList.add('hidden');
+      dashboardView.classList.remove('hidden');
+      logoutButton.classList.remove('hidden');
+      refreshLists();
+      if (!listTimer) listTimer = setInterval(refreshLists, 5000);
+      if (!durationTimer) durationTimer = setInterval(updateLiveDurations, 1000);
+    }
+
+    function showLogin(message) {
+      dashboardView.classList.add('hidden');
+      loginView.classList.remove('hidden');
+      logoutButton.classList.add('hidden');
+      if (listTimer) clearInterval(listTimer);
+      listTimer = null;
+      if (durationTimer) clearInterval(durationTimer);
+      durationTimer = null;
+      document.getElementById('login-error').textContent = message || '';
+    }
+
+    async function login(event) {
+      event.preventDefault();
+      const body = JSON.stringify({
+        username: document.getElementById('username').value,
+        password: document.getElementById('password').value
+      });
+      const response = await fetch('/api/admin/login', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        credentials: 'same-origin',
+        body
+      });
+      if (response.ok) showDashboard();
+      else showLogin('Invalid username or password');
+    }
+
+    async function logout() {
+      await fetch('/api/admin/logout', {method: 'POST', credentials: 'same-origin'});
+      showLogin('');
+    }
+
+    function formatTime(value) {
+      if (!value) return '-';
+      return new Date(value * 1000).toLocaleString();
+    }
+
+    function formatDuration(value) {
+      let seconds = Number(value) || 0;
+      if (seconds < 0) seconds = 0;
+      const days = Math.floor(seconds / 86400);
+      seconds %= 86400;
+      const hours = Math.floor(seconds / 3600);
+      seconds %= 3600;
+      const minutes = Math.floor(seconds / 60);
+      seconds = Math.floor(seconds % 60);
+      if (days > 0) return `${days}d ${hours}h`;
+      if (hours > 0) return `${hours}h ${minutes}m`;
+      if (minutes > 0) return `${minutes}m ${seconds}s`;
+      return `${seconds}s`;
+    }
+
+    function appendEmptyRow(body, colSpan) {
+      const row = document.createElement('tr');
+      const cell = document.createElement('td');
+      cell.className = 'empty';
+      cell.colSpan = colSpan;
+      cell.textContent = 'No records';
+      row.appendChild(cell);
+      body.appendChild(row);
+    }
+
+    function appendText(parent, tag, value, className) {
+      const element = document.createElement(tag);
+      if (className) element.className = className;
+      element.textContent = value;
+      parent.appendChild(element);
+      return element;
+    }
+
+    function labelCell(cell, label) {
+      cell.dataset.label = label;
+      return cell;
+    }
+
+    function appendBadge(parent, value, className) {
+      return appendText(parent, 'span', value, `badge ${className}`);
+    }
+
+    function formatPercent(count, total) {
+      if (!total) return '0%';
+      return `${((Number(count) || 0) * 100 / total).toFixed(1)}%`;
+    }
+
+    function geoColor(count, maxCount) {
+      const value = Number(count) || 0;
+      if (value <= 0 || maxCount <= 0) return GEO_COLORS[0];
+      const index = Math.max(1, Math.ceil((value / maxCount) * (GEO_COLORS.length - 1)));
+      return GEO_COLORS[Math.min(index, GEO_COLORS.length - 1)];
+    }
+
+    function provinceKey(feature) {
+      return feature && feature.properties ? feature.properties.key : '';
+    }
+
+    function provinceName(feature) {
+      return feature && feature.properties ? feature.properties.name : '';
+    }
+
+    function provinceTooltipText(feature) {
+      const count = geoProvinceCounts.get(provinceKey(feature)) || 0;
+      return `${provinceName(feature)}: ${count} (${formatPercent(count, geoTotalUsers)})`;
+    }
+
+    function moveGeoTooltip(event) {
+      const wrap = document.querySelector('.china-map-wrap');
+      const tooltip = document.getElementById('geo-tooltip');
+      if (!wrap || !tooltip) return;
+      const rect = wrap.getBoundingClientRect();
+      if (typeof event.clientX !== 'number' || typeof event.clientY !== 'number') {
+        tooltip.style.left = '10px';
+        tooltip.style.top = '10px';
+        return;
+      }
+      const left = Math.max(0, Math.min(event.clientX - rect.left, rect.width - 220));
+      const top = Math.max(0, Math.min(event.clientY - rect.top, rect.height - 54));
+      tooltip.style.left = `${left}px`;
+      tooltip.style.top = `${top}px`;
+    }
+
+    function showGeoTooltip(event, feature) {
+      const tooltip = document.getElementById('geo-tooltip');
+      const count = geoProvinceCounts.get(provinceKey(feature)) || 0;
+      tooltip.replaceChildren();
+      appendText(tooltip, 'strong', provinceName(feature));
+      appendText(tooltip, 'span', `${count} users`);
+      appendText(tooltip, 'small', formatPercent(count, geoTotalUsers));
+      tooltip.classList.add('visible');
+      const label = document.getElementById(`geo-label-${provinceKey(feature)}`);
+      if (label) label.classList.add('visible');
+      moveGeoTooltip(event);
+    }
+
+    function hideGeoTooltip() {
+      document.getElementById('geo-tooltip').classList.remove('visible');
+      document.querySelectorAll('.china-map .map-label.visible').forEach(label => {
+        label.classList.remove('visible');
+      });
+    }
+
+    function walkGeoCoordinates(value, visitor) {
+      if (!Array.isArray(value)) return;
+      if (typeof value[0] === 'number' && typeof value[1] === 'number') {
+        visitor(value);
+        return;
+      }
+      value.forEach(item => walkGeoCoordinates(item, visitor));
+    }
+
+    function mercatorPoint(coord) {
+      const lon = Number(coord[0]);
+      const lat = Math.max(-85, Math.min(85, Number(coord[1])));
+      const x = lon * Math.PI / 180;
+      const y = Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360));
+      return [x, y];
+    }
+
+    function buildMapProjection(features) {
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      features.forEach(feature => {
+        walkGeoCoordinates(feature.geometry && feature.geometry.coordinates, coord => {
+          const point = mercatorPoint(coord);
+          minX = Math.min(minX, point[0]);
+          minY = Math.min(minY, point[1]);
+          maxX = Math.max(maxX, point[0]);
+          maxY = Math.max(maxY, point[1]);
+        });
+      });
+      const width = Math.max(maxX - minX, 0.0001);
+      const height = Math.max(maxY - minY, 0.0001);
+      const scale = Math.min(
+        (MAP_WIDTH - MAP_PADDING * 2) / width,
+        (MAP_HEIGHT - MAP_PADDING * 2) / height);
+      const offsetX = (MAP_WIDTH - width * scale) / 2;
+      const offsetY = (MAP_HEIGHT - height * scale) / 2;
+      return coord => {
+        const point = mercatorPoint(coord);
+        return [
+          offsetX + (point[0] - minX) * scale,
+          offsetY + (maxY - point[1]) * scale
+        ];
+      };
+    }
+
+    function formatMapPoint(point) {
+      return `${point[0].toFixed(1)} ${point[1].toFixed(1)}`;
+    }
+
+    function ringPath(ring, project) {
+      if (!Array.isArray(ring) || !ring.length) return '';
+      return ring.map((coord, index) => {
+        const command = index === 0 ? 'M' : 'L';
+        return `${command}${formatMapPoint(project(coord))}`;
+      }).join(' ') + ' Z';
+    }
+
+    function geometryPath(geometry, project) {
+      if (!geometry || !Array.isArray(geometry.coordinates)) return '';
+      const paths = [];
+      if (geometry.type === 'Polygon') {
+        geometry.coordinates.forEach(ring => paths.push(ringPath(ring, project)));
+      } else if (geometry.type === 'MultiPolygon') {
+        geometry.coordinates.forEach(polygon => {
+          polygon.forEach(ring => paths.push(ringPath(ring, project)));
+        });
+      }
+      return paths.filter(Boolean).join(' ');
+    }
+
+    function geometryCenter(geometry) {
+      let minLon = Infinity;
+      let minLat = Infinity;
+      let maxLon = -Infinity;
+      let maxLat = -Infinity;
+      walkGeoCoordinates(geometry && geometry.coordinates, coord => {
+        const lon = Number(coord[0]);
+        const lat = Number(coord[1]);
+        if (!Number.isFinite(lon) || !Number.isFinite(lat)) return;
+        minLon = Math.min(minLon, lon);
+        minLat = Math.min(minLat, lat);
+        maxLon = Math.max(maxLon, lon);
+        maxLat = Math.max(maxLat, lat);
+      });
+      if (!Number.isFinite(minLon) || !Number.isFinite(minLat)) return null;
+      return [(minLon + maxLon) / 2, (minLat + maxLat) / 2];
+    }
+
+    function featureCenter(feature) {
+      if (feature && feature.properties && Array.isArray(feature.properties.cp)) {
+        return feature.properties.cp;
+      }
+      return geometryCenter(feature && feature.geometry);
+    }
+
+    async function loadChinaMapData() {
+      if (geoFeatures.length) return true;
+      if (!geoMapDataPromise) {
+        geoMapDataPromise = fetch(CHINA_MAP_URL, {credentials: 'same-origin'})
+          .then(response => {
+            if (!response.ok) throw new Error('map data unavailable');
+            return response.json();
+          })
+          .then(data => {
+            geoFeatures = (Array.isArray(data.features) ? data.features : [])
+              .filter(feature => provinceKey(feature) &&
+                feature.geometry && Array.isArray(feature.geometry.coordinates));
+            geoFeatureByKey = new Map(
+              geoFeatures.map(feature => [provinceKey(feature), feature]));
+            return geoFeatures.length > 0;
+          })
+          .catch(() => {
+            geoMapDataPromise = null;
+            return false;
+          });
+      }
+      return geoMapDataPromise;
+    }
+
+    function renderMapStatus(message) {
+      const svg = document.getElementById('china-map');
+      svg.setAttribute('viewBox', `0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`);
+      const text = document.createElementNS(MAP_NS, 'text');
+      text.classList.add('map-status');
+      text.setAttribute('x', MAP_WIDTH / 2);
+      text.setAttribute('y', MAP_HEIGHT / 2);
+      text.textContent = message;
+      svg.replaceChildren(text);
+    }
+
+    async function ensureChinaMap() {
+      if (geoMapReady) return true;
+      if (!await loadChinaMapData()) {
+        renderMapStatus('地图数据加载失败');
+        return false;
+      }
+      const svg = document.getElementById('china-map');
+      svg.setAttribute('viewBox', `0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`);
+      const project = buildMapProjection(geoFeatures);
+      const provinceLayer = document.createElementNS(MAP_NS, 'g');
+      provinceLayer.classList.add('province-layer');
+      const labelLayer = document.createElementNS(MAP_NS, 'g');
+      labelLayer.classList.add('label-layer');
+
+      geoFeatures.forEach(feature => {
+        const key = provinceKey(feature);
+        const path = document.createElementNS(MAP_NS, 'path');
+        path.id = `geo-province-${key}`;
+        path.classList.add('province');
+        path.setAttribute('d', geometryPath(feature.geometry, project));
+        path.setAttribute('fill', GEO_COLORS[0]);
+        path.setAttribute('fill-rule', 'evenodd');
+        path.setAttribute('tabindex', '0');
+        path.setAttribute('role', 'img');
+        path.setAttribute('aria-label', provinceTooltipText(feature));
+        path.addEventListener('mouseenter', event => showGeoTooltip(event, feature));
+        path.addEventListener('mousemove', moveGeoTooltip);
+        path.addEventListener('mouseleave', hideGeoTooltip);
+        path.addEventListener('focus', event => showGeoTooltip(event, feature));
+        path.addEventListener('blur', hideGeoTooltip);
+        provinceLayer.appendChild(path);
+
+        const label = document.createElementNS(MAP_NS, 'text');
+        const centerCoord = featureCenter(feature);
+        if (!centerCoord) return;
+        const center = project(centerCoord);
+        const offset = PROVINCE_LABEL_OFFSETS[key] || [0, 0];
+        label.id = `geo-label-${key}`;
+        label.classList.add('map-label');
+        if (['beijing', 'tianjin', 'shanghai', 'hongkong', 'macau'].includes(key)) {
+          label.classList.add('small');
+        }
+        label.setAttribute('x', (center[0] + offset[0]).toFixed(1));
+        label.setAttribute('y', (center[1] + offset[1]).toFixed(1));
+        label.textContent = provinceName(feature);
+        labelLayer.appendChild(label);
+      });
+      svg.replaceChildren(provinceLayer, labelLayer);
+      geoMapReady = true;
+      return true;
+    }
+
+    function applyGeoMapColors() {
+      let maxProvinceCount = 0;
+      geoProvinceCounts.forEach(count => {
+        if (count > maxProvinceCount) maxProvinceCount = count;
+      });
+      geoFeatures.forEach(feature => {
+        const key = provinceKey(feature);
+        const count = geoProvinceCounts.get(key) || 0;
+        const path = document.getElementById(`geo-province-${key}`);
+        if (!path) return;
+        path.setAttribute('fill', geoColor(count, maxProvinceCount));
+        path.setAttribute('aria-label', provinceTooltipText(feature));
+      });
+    }
+
+    function renderGeoDistribution(distribution) {
+      const data = distribution || {total_count: 0, foreign_count: 0, unknown_count: 0, provinces: []};
+      geoTotalUsers = Number(data.total_count) || 0;
+      geoProvinceCounts = new Map();
+      (Array.isArray(data.provinces) ? data.provinces : []).forEach(item => {
+        const count = Number(item.count) || 0;
+        geoProvinceCounts.set(item.province, count);
+      });
+
+      const foreignCount = Number(data.foreign_count) || 0;
+      const unknownCount = Number(data.unknown_count) || 0;
+      document.getElementById('geo-total').textContent = geoTotalUsers;
+      document.getElementById('geo-foreign-count').textContent = foreignCount;
+      document.getElementById('geo-foreign-percent').textContent = formatPercent(foreignCount, geoTotalUsers);
+      document.getElementById('geo-unknown-count').textContent = unknownCount;
+      document.getElementById('geo-unknown-percent').textContent = formatPercent(unknownCount, geoTotalUsers);
+
+      const topList = document.getElementById('geo-top-provinces');
+      topList.textContent = '';
+      const topProvinces = (Array.isArray(data.provinces) ? data.provinces : []).slice(0, 5);
+      if (!topProvinces.length) {
+        const item = document.createElement('li');
+        item.textContent = '-';
+        topList.appendChild(item);
+        return;
+      }
+      topProvinces.forEach(item => {
+        const province = geoFeatureByKey.get(item.province);
+        const count = Number(item.count) || 0;
+        const li = document.createElement('li');
+        li.textContent = `${province ? provinceName(province) : item.province}: ${count} (${formatPercent(count, geoTotalUsers)})`;
+        topList.appendChild(li);
+      });
+
+      if (!geoMapReady) {
+        ensureChinaMap().then(ok => {
+          if (ok) {
+            renderGeoDistribution(data);
+          }
+        });
+        return;
+      }
+      applyGeoMapColors();
+    }
+
+    function setDurationDataset(cell, kind, device, base, capturedAt, running, rate) {
+      const isRunning = typeof running === 'boolean' ? running : device.online;
+      cell.dataset.duration = kind;
+      cell.dataset.online = device.online ? '1' : '0';
+      cell.dataset.running = isRunning ? '1' : '0';
+      cell.dataset.base = String(base || 0);
+      cell.dataset.capturedAt = String(capturedAt);
+      cell.dataset.rate = String(rate || 1);
+    }
+
+    function sessionSummary(device) {
+      const targets = Array.isArray(device.active_control_targets) ? device.active_control_targets : [];
+      const controlledBy = Array.isArray(device.active_controlled_by) ? device.active_controlled_by : [];
+      const controlling = Number(device.active_control_count) || targets.length;
+      const controlled = Number(device.active_controlled_count) || controlledBy.length;
+      const parts = [];
+      if (controlling > 0) parts.push(`controlling ${controlling}`);
+      if (controlled > 0) parts.push(`controlled by ${controlled}`);
+      return parts.join(', ') || '-';
+    }
+
+    function peerList(value) {
+      return Array.isArray(value) && value.length ? value.join(', ') : '-';
+    }
+
+    function locationLabel(device) {
+      if (device.geo_location) return device.geo_location;
+      if (device.client_ip) return 'Unknown';
+      return '-';
+    }
+
+    function activeDuration(value, activeCount) {
+      return Number(activeCount) > 0 ? formatDuration(value) : '-';
+    }
+
+    function appendDetailItem(parent, label, value, className, dataset) {
+      const item = document.createElement('div');
+      appendText(item, 'span', label);
+      const strong = appendText(item, 'strong', value, className);
+      if (dataset) {
+        Object.keys(dataset).forEach(key => {
+          strong.dataset[key] = dataset[key];
+        });
+      }
+      parent.appendChild(item);
+      return strong;
+    }
+
+    function renderDevices(devices) {
+      currentDevices = devices;
+      const body = document.getElementById('devices');
+      const fragment = document.createDocumentFragment();
+      if (!devices.length) {
+        appendEmptyRow(fragment, 5);
+        body.replaceChildren(fragment);
+        return;
+      }
+      const capturedAt = Math.floor(Date.now() / 1000);
+      devices.forEach(device => {
+        const activeSessions = Number(device.active_session_count) || 0;
+        const isExpanded = expandedDevices.has(device.id);
+        const row = document.createElement('tr');
+        row.className = isExpanded ? 'device-row expanded' : 'device-row';
+        const clientCell = document.createElement('td');
+        labelCell(clientCell, 'Client');
+        appendText(clientCell, 'div', device.id, 'device-id');
+        appendText(clientCell, 'span', device.kind === 'web' ? 'web client' : 'device', 'subline');
+        row.appendChild(clientCell);
+
+        const statusCell = document.createElement('td');
+        labelCell(statusCell, 'State');
+        appendBadge(statusCell, device.online ? 'online' : 'offline',
+          device.online ? 'online' : 'offline');
+        if (activeSessions > 0) appendBadge(statusCell, 'remote', 'active');
+        row.appendChild(statusCell);
+
+        const locationCell = document.createElement('td');
+        labelCell(locationCell, 'Location');
+        appendText(locationCell, 'div', locationLabel(device));
+        row.appendChild(locationCell);
+
+        const currentCell = appendText(row, 'td', device.online ? formatDuration(device.online_duration_seconds) : '-');
+        labelCell(currentCell, 'Current online');
+        setDurationDataset(currentCell, 'current', device, device.online_duration_seconds, capturedAt);
+        const detailCell = document.createElement('td');
+        detailCell.className = 'detail-action';
+        labelCell(detailCell, 'Detail');
+        const detailButton = document.createElement('button');
+        detailButton.type = 'button';
+        detailButton.textContent = isExpanded ? 'Hide' : 'Details';
+        detailButton.addEventListener('click', () => {
+          if (expandedDevices.has(device.id)) expandedDevices.delete(device.id);
+          else expandedDevices.add(device.id);
+          renderDevices(currentDevices);
+        });
+        detailCell.appendChild(detailButton);
+        row.appendChild(detailCell);
+        fragment.appendChild(row);
+
+        if (isExpanded) {
+          const detailsRow = document.createElement('tr');
+          detailsRow.className = 'details-row';
+          const detailsCell = document.createElement('td');
+          detailsCell.colSpan = 5;
+          const details = document.createElement('div');
+          details.className = 'detail-grid';
+          const currentOnline = appendDetailItem(
+            details, 'Current online',
+            device.online ? formatDuration(device.online_duration_seconds) : '-');
+          setDurationDataset(currentOnline, 'current-online', device,
+            device.online_duration_seconds, capturedAt);
+          const totalOnline = appendDetailItem(
+            details, 'Total online', formatDuration(device.total_online_seconds));
+          setDurationDataset(totalOnline, 'total', device, device.total_online_seconds, capturedAt);
+          const activeControlCount = Number(device.active_control_count) || 0;
+          const activeControlledCount = Number(device.active_controlled_count) || 0;
+          const currentControl = appendDetailItem(
+            details, 'Current control',
+            activeDuration(device.current_control_seconds, activeControlCount));
+          setDurationDataset(currentControl, 'current-control', device,
+            device.current_control_seconds, capturedAt,
+            activeControlCount > 0, activeControlCount);
+          const totalControl = appendDetailItem(
+            details, 'Total control', formatDuration(device.total_control_seconds));
+          setDurationDataset(totalControl, 'total-control', device,
+            device.total_control_seconds, capturedAt,
+            activeControlCount > 0, activeControlCount);
+          const currentControlled = appendDetailItem(
+            details, 'Current controlled',
+            activeDuration(device.current_controlled_seconds, activeControlledCount));
+          setDurationDataset(currentControlled, 'current-controlled', device,
+            device.current_controlled_seconds, capturedAt,
+            activeControlledCount > 0, activeControlledCount);
+          const totalControlled = appendDetailItem(
+            details, 'Total controlled', formatDuration(device.total_controlled_seconds));
+          setDurationDataset(totalControlled, 'total-controlled', device,
+            device.total_controlled_seconds, capturedAt,
+            activeControlledCount > 0, activeControlledCount);
+          appendDetailItem(details, 'Location', locationLabel(device));
+          appendDetailItem(details, 'Client IP', device.client_ip || '-');
+          appendDetailItem(details, 'City', device.geo_city || '-');
+          appendDetailItem(details, 'Region', device.geo_region || '-');
+          appendDetailItem(details, 'Country', device.geo_country || '-');
+          appendDetailItem(details, 'Online since', formatTime(device.online_since));
+          appendDetailItem(details, 'Last online', formatTime(device.online ? 0 : device.updated_at));
+          appendDetailItem(details, 'Active session', sessionSummary(device));
+          appendDetailItem(details, 'Controlling', peerList(device.active_control_targets), 'peer-list');
+          appendDetailItem(details, 'Controlled by', peerList(device.active_controlled_by), 'peer-list');
+          detailsCell.appendChild(details);
+          detailsRow.appendChild(detailsCell);
+          fragment.appendChild(detailsRow);
+        }
+      });
+      body.replaceChildren(fragment);
+      updateLiveDurations();
+    }
+
+    function renderSessions(sessions) {
+      const body = document.getElementById('sessions');
+      const fragment = document.createDocumentFragment();
+      if (!sessions.length) {
+        appendEmptyRow(fragment, 3);
+        body.replaceChildren(fragment);
+        return;
+      }
+      sessions.forEach(session => {
+        const guests = session.guest_ids.join(', ') || '-';
+        const row = document.createElement('tr');
+        row.className = 'session-row';
+        const transmissionCell = document.createElement('td');
+        labelCell(transmissionCell, 'Transmission');
+        appendText(transmissionCell, 'div', session.transmission_id);
+        appendText(transmissionCell, 'span', `host ${session.host_id}`, 'muted');
+        row.appendChild(transmissionCell);
+
+        const participantsCell = document.createElement('td');
+        labelCell(participantsCell, 'Participants');
+        appendText(participantsCell, 'div', session.participant_count);
+        appendText(participantsCell, 'span', guests, 'muted');
+        row.appendChild(participantsCell);
+
+        const actionCell = document.createElement('td');
+        labelCell(actionCell, 'Action');
+        const button = document.createElement('button');
+        button.className = 'danger';
+        button.textContent = 'Disconnect';
+        button.dataset.id = session.transmission_id;
+        button.dataset.host = session.host_id;
+        button.addEventListener('click', () => disconnectSession(button.dataset.id, button.dataset.host, button));
+        actionCell.appendChild(button);
+        row.appendChild(actionCell);
+        fragment.appendChild(row);
+      });
+      body.replaceChildren(fragment);
+    }
+
+    function buildOverviewUrl() {
+      const params = new URLSearchParams();
+      params.set('device_limit', state.devices.limit);
+      params.set('device_offset', state.devices.offset);
+      params.set('device_filter', state.devices.filter);
+      params.set('device_sort', state.devices.sort);
+      params.set('device_order', state.devices.order);
+      params.set('session_limit', state.sessions.limit);
+      params.set('session_offset', state.sessions.offset);
+      if (state.devices.search) params.set('device_search', state.devices.search);
+      if (state.sessions.search) params.set('session_search', state.sessions.search);
+      return `/api/admin/overview?${params.toString()}`;
+    }
+
+    function syncPage(pageState, pageData) {
+      if (!pageData) return false;
+      pageState.limit = pageData.limit;
+      pageState.offset = pageData.offset;
+      pageState.total = pageData.total;
+      if (pageState.total > 0 && pageState.offset >= pageState.total && pageState.limit > 0) {
+        pageState.offset = Math.floor((pageState.total - 1) / pageState.limit) * pageState.limit;
+        return true;
+      }
+      return false;
+    }
+
+    function updatePager(kind) {
+      const page = state[kind];
+      const prefix = kind === 'devices' ? 'device' : 'session';
+      const start = page.total === 0 ? 0 : Math.min(page.offset + 1, page.total);
+      const end = Math.min(page.offset + page.limit, page.total);
+      document.getElementById(`${prefix}-page-info`).textContent = `${start}-${end} of ${page.total}`;
+      document.getElementById(`${prefix}-prev`).disabled = page.offset === 0;
+      document.getElementById(`${prefix}-next`).disabled = page.offset + page.limit >= page.total;
+      document.getElementById(`${prefix}-limit`).value = String(page.limit);
+      if (kind === 'devices') {
+        document.getElementById('device-sort').value = page.sort;
+        document.getElementById('device-order').textContent = page.order === 'asc' ? 'ASC' : 'DESC';
+        document.getElementById('device-order').title = page.order === 'asc' ? 'Ascending' : 'Descending';
+      }
+    }
+
+    function applyDeviceCounts(counts) {
+      if (counts) {
+        ['all', 'online', 'offline', 'active', 'web'].forEach(filter => {
+          const count = Number(counts[filter]) || 0;
+          const countElement = document.getElementById(`device-count-${filter}`);
+          if (countElement) countElement.textContent = count;
+        });
+      }
+      document.querySelectorAll('[data-device-filter]').forEach(button => {
+        button.classList.toggle('active', button.dataset.deviceFilter === state.devices.filter);
+        button.setAttribute('aria-selected', button.dataset.deviceFilter === state.devices.filter ? 'true' : 'false');
+      });
+    }
+
+    function applyStats(stats) {
+      document.getElementById('metric-devices').textContent = stats.online_device_count;
+      document.getElementById('metric-web').textContent = stats.online_web_client_count;
+      document.getElementById('metric-sessions').textContent = stats.active_connection_count;
+      document.getElementById('metric-duration').textContent = formatDuration(stats.total_online_seconds);
+      document.getElementById('metric-control').textContent = formatDuration(stats.total_control_seconds);
+      document.getElementById('metric-controlled').textContent = formatDuration(stats.total_controlled_seconds);
+      document.getElementById('last-refresh').textContent = new Date().toLocaleTimeString();
+      statsSnapshot = {
+        onlineDuration: Number(stats.total_online_seconds) || 0,
+        onlineCount: Number(stats.online_device_count) || 0,
+        controlDuration: Number(stats.total_control_seconds) || 0,
+        controlledDuration: Number(stats.total_controlled_seconds) || 0,
+        activeConnections: Number(stats.active_connection_count) || 0,
+        capturedAt: Math.floor(Date.now() / 1000)
+      };
+    }
+
+    function updateLiveDurations() {
+      const now = Math.floor(Date.now() / 1000);
+      document.querySelectorAll('[data-duration]').forEach(cell => {
+        if (cell.dataset.running !== '1') return;
+        const base = Number(cell.dataset.base) || 0;
+        const capturedAt = Number(cell.dataset.capturedAt) || now;
+        const rate = Number(cell.dataset.rate) || 1;
+        cell.textContent = formatDuration(base + rate * (now - capturedAt));
+      });
+      if (statsSnapshot.capturedAt > 0) {
+        const elapsed = now - statsSnapshot.capturedAt;
+        document.getElementById('metric-duration').textContent =
+          formatDuration(statsSnapshot.onlineDuration +
+            statsSnapshot.onlineCount * elapsed);
+        document.getElementById('metric-control').textContent =
+          formatDuration(statsSnapshot.controlDuration +
+            statsSnapshot.activeConnections * elapsed);
+        document.getElementById('metric-controlled').textContent =
+          formatDuration(statsSnapshot.controlledDuration +
+            statsSnapshot.activeConnections * elapsed);
+      }
+    }
+
+    async function refreshStats() {
+      if (document.hidden) return true;
+      let response;
+      try {
+        response = await fetch('/api/admin/stats', {credentials: 'same-origin'});
+      } catch (_) {
+        document.getElementById('refresh-error').textContent = 'Connection error';
+        return false;
+      }
+      if (response.status === 401) {
+        showLogin('');
+        return false;
+      }
+      if (!response.ok) {
+        document.getElementById('refresh-error').textContent = 'Connection error';
+        return false;
+      }
+      const data = await response.json();
+      document.getElementById('refresh-error').textContent = '';
+      applyStats(data.stats);
+      return true;
+    }
+
+    async function refreshLists() {
+      if (document.hidden) return true;
+      const serial = ++listRefreshSerial;
+      const refreshButton = document.getElementById('list-refresh');
+      refreshButton.disabled = true;
+      let response;
+      try {
+        response = await fetch(buildOverviewUrl(), {credentials: 'same-origin'});
+      } catch (_) {
+        document.getElementById('refresh-error').textContent = 'Connection error';
+        refreshButton.disabled = false;
+        return false;
+      }
+      if (response.status === 401) {
+        showLogin('');
+        refreshButton.disabled = false;
+        return false;
+      }
+      if (!response.ok) {
+        document.getElementById('refresh-error').textContent = 'Connection error';
+        refreshButton.disabled = false;
+        return false;
+      }
+      const data = await response.json();
+      if (serial !== listRefreshSerial) {
+        refreshButton.disabled = false;
+        return true;
+      }
+      document.getElementById('refresh-error').textContent = '';
+      applyStats(data.stats);
+      const reloadDevices = syncPage(state.devices, data.devices_page);
+      const reloadSessions = syncPage(state.sessions, data.sessions_page);
+      if (reloadDevices || reloadSessions) {
+        refreshButton.disabled = false;
+        return refreshLists();
+      }
+      applyDeviceCounts(data.device_counts);
+      renderGeoDistribution(data.geo_distribution);
+      renderDevices(data.devices || []);
+      renderSessions(data.sessions || []);
+      updatePager('devices');
+      updatePager('sessions');
+      refreshButton.disabled = false;
+      return true;
+    }
+
+    async function disconnectSession(id, host, button) {
+      if (!confirm(`Disconnect session ${id} for host ${host}? Devices stay online.`)) return;
+      button.disabled = true;
+      const response = await fetch(`/api/admin/sessions/${encodeURIComponent(id)}/disconnect`, {
+        method: 'POST',
+        credentials: 'same-origin'
+      });
+      button.disabled = false;
+      if (response.ok) {
+        refreshLists();
+      }
+      else document.getElementById('refresh-error').textContent = 'Failed to disconnect session';
+    }
+
+    document.getElementById('login-form').addEventListener('submit', login);
+    document.getElementById('logout').addEventListener('click', logout);
+    document.getElementById('device-search').addEventListener('input', (event) => {
+      state.devices.search = event.target.value.trim();
+      state.devices.offset = 0;
+      clearTimeout(searchTimers.devices);
+      searchTimers.devices = setTimeout(refreshLists, 250);
+    });
+    document.querySelectorAll('[data-device-filter]').forEach(button => {
+      button.addEventListener('click', () => {
+        state.devices.filter = button.dataset.deviceFilter;
+        state.devices.offset = 0;
+        expandedDevices.clear();
+        applyDeviceCounts();
+        refreshLists();
+      });
+    });
+    document.getElementById('device-sort').addEventListener('change', (event) => {
+      state.devices.sort = event.target.value;
+      state.devices.offset = 0;
+      refreshLists();
+    });
+    document.getElementById('device-order').addEventListener('click', () => {
+      state.devices.order = state.devices.order === 'asc' ? 'desc' : 'asc';
+      state.devices.offset = 0;
+      refreshLists();
+    });
+    document.getElementById('session-search').addEventListener('input', (event) => {
+      state.sessions.search = event.target.value.trim();
+      state.sessions.offset = 0;
+      clearTimeout(searchTimers.sessions);
+      searchTimers.sessions = setTimeout(refreshLists, 250);
+    });
+    document.getElementById('device-limit').addEventListener('change', (event) => {
+      state.devices.limit = Number(event.target.value);
+      state.devices.offset = 0;
+      refreshLists();
+    });
+    document.getElementById('session-limit').addEventListener('change', (event) => {
+      state.sessions.limit = Number(event.target.value);
+      state.sessions.offset = 0;
+      refreshLists();
+    });
+    document.getElementById('device-prev').addEventListener('click', () => {
+      state.devices.offset = Math.max(0, state.devices.offset - state.devices.limit);
+      refreshLists();
+    });
+    document.getElementById('device-next').addEventListener('click', () => {
+      if (state.devices.offset + state.devices.limit < state.devices.total) {
+        state.devices.offset += state.devices.limit;
+        refreshLists();
+      }
+    });
+    document.getElementById('session-prev').addEventListener('click', () => {
+      state.sessions.offset = Math.max(0, state.sessions.offset - state.sessions.limit);
+      refreshLists();
+    });
+    document.getElementById('session-next').addEventListener('click', () => {
+      if (state.sessions.offset + state.sessions.limit < state.sessions.total) {
+        state.sessions.offset += state.sessions.limit;
+        refreshLists();
+      }
+    });
+    document.getElementById('list-refresh').addEventListener('click', refreshLists);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && !dashboardView.classList.contains('hidden')) {
+        refreshLists();
+      }
+    });
+    applyDeviceCounts();
+    renderGeoDistribution();
+    refreshStats().then((ok) => {
+      if (ok) showDashboard();
+      else showLogin('');
+    }).catch(() => showLogin(''));

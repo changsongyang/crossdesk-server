@@ -27,6 +27,8 @@ int main() {
   };
 
   expect(AdminController::IsAdminRoute("/admin"), "/admin is admin route");
+  expect(AdminController::IsAdminRoute("/admin/assets/admin.js"),
+         "/admin/assets/admin.js is admin route");
   expect(AdminController::IsAdminRoute("/api/admin/overview"),
          "/api/admin/overview is admin route");
   expect(AdminController::IsAdminRoute("/api/admin/overview?session_limit=1"),
@@ -62,6 +64,23 @@ int main() {
   AdminAuth auth("admin", "secret", std::chrono::seconds(60));
   AdminController controller(&auth, nullptr, transmission, nullptr,
                              [](const std::string&, nlohmann::json) {});
+  AdminHttpResponse admin_page =
+      controller.Handle({"GET", "/admin", "", ""});
+  expect(admin_page.status == 200, "admin page returns static frontend");
+  expect(admin_page.body.find("/admin/assets/admin.js") != std::string::npos,
+         "admin page references separated frontend script");
+  AdminHttpResponse admin_script =
+      controller.Handle({"GET", "/admin/assets/admin.js", "", ""});
+  expect(admin_script.status == 200, "admin script asset returns ok");
+  expect(admin_script.content_type.find("javascript") != std::string::npos,
+         "admin script asset uses javascript content type");
+  AdminHttpResponse china_map =
+      controller.Handle({"GET", "/admin/assets/china-provinces.json", "", ""});
+  expect(china_map.status == 200, "china map asset returns ok");
+  expect(china_map.content_type.find("json") != std::string::npos,
+         "china map asset uses json content type");
+  expect(china_map.body.find("FeatureCollection") != std::string::npos,
+         "china map asset returns geojson data");
   AdminHttpResponse unauthorized =
       controller.Handle({"GET", "/api/admin/overview", "", ""});
   expect(unauthorized.status == 401,

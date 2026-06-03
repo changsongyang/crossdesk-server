@@ -204,3 +204,5 @@ https://your-domain.example.com:9090/admin
 后台页面会显示在线设备数、在线 Web 客户端数、活动远控会话、累计在线时长、累计控制时长和累计被控时长，并支持断开选中的远控会话。页面包含中国用户分布地图，可用颜色深浅查看各省份用户数量，国外用户会单独汇总展示。客户端状态列表默认展示在线设备，并提供在线、远控中、离线、全部和 Web 客户端筛选；列表支持搜索、分页、排序和展开详情，并显示客户端最后一次 WebSocket 连接 IP 解析出的地理位置。客户端在线时本次在线时长会实时刷新，下线后保留记录并显示最后在线时间点。
 
 公网 IP 的地理位置默认通过 `ip-api.com` 查询并在服务进程内缓存，内网、回环和 Docker 私有网段会显示为 `Private network`。如需关闭公网 GeoIP 查询，可设置 `CROSSDESK_GEOIP_LOOKUP=0`；查询超时时间可通过 `CROSSDESK_GEOIP_TIMEOUT_MS` 调整，默认 1200ms。
+
+后台前端资源位于 `src/admin/web`，容器内默认复制到 `/crossdesk-server/admin`；如需使用自定义前端目录，可设置 `CROSSDESK_ADMIN_WEB_DIR`。中国地图边界数据 `china-provinces.json` 由 ISC 许可的 `china-map-geojson@1.0.4` 省级 GeoJSON 数据生成。

@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CrossDesk Admin</title>
+  <link rel="stylesheet" href="/admin/assets/admin.css">
+</head>
+<body>
+  <header>
+    <h1>CrossDesk Admin</h1>
+    <button id="logout" class="hidden">Logout</button>
+  </header>
+  <main>
+    <section id="login-view" class="login">
+      <form id="login-form" class="panel">
+        <h2>Admin Login</h2>
+        <input id="username" autocomplete="username" placeholder="Username" required>
+        <input id="password" autocomplete="current-password" placeholder="Password" type="password" required>
+        <button class="primary" type="submit">Login</button>
+        <div id="login-error" class="error"></div>
+      </form>
+    </section>
+    <section id="dashboard-view" class="hidden">
+      <div class="toolbar">
+        <div class="muted">Last refresh: <span id="last-refresh">never</span></div>
+        <div class="actions">
+          <button id="list-refresh" type="button">Refresh lists</button>
+          <div id="refresh-error" class="error"></div>
+        </div>
+      </div>
+      <div class="metrics">
+        <div class="metric"><span>Online devices</span><strong id="metric-devices">0</strong></div>
+        <div class="metric"><span>Web clients</span><strong id="metric-web">0</strong></div>
+        <div class="metric"><span>Active sessions</span><strong id="metric-sessions">0</strong></div>
+        <div class="metric"><span>Online time</span><strong id="metric-duration">0s</strong></div>
+        <div class="metric"><span>Control time</span><strong id="metric-control">0s</strong></div>
+        <div class="metric"><span>Controlled time</span><strong id="metric-controlled">0s</strong></div>
+      </div>
+      <section class="panel geo-panel">
+        <div class="toolbar">
+          <h2>中国用户分布</h2>
+          <div class="geo-total">总用户 <strong id="geo-total">0</strong></div>
+        </div>
+        <div class="geo-layout">
+          <div class="china-map-wrap">
+            <svg id="china-map" class="china-map" viewBox="0 0 760 560" role="img" aria-label="China user distribution map"></svg>
+            <div id="geo-tooltip" class="geo-tooltip"></div>
+          </div>
+          <aside class="geo-side">
+            <div class="geo-stat">
+              <span>国外用户</span>
+              <strong id="geo-foreign-count">0</strong>
+              <small id="geo-foreign-percent">0%</small>
+            </div>
+            <div class="geo-stat">
+              <span>未解析</span>
+              <strong id="geo-unknown-count">0</strong>
+              <small id="geo-unknown-percent">0%</small>
+            </div>
+            <div class="geo-list">
+              <span class="geo-list-title">省份排行</span>
+              <ol id="geo-top-provinces" class="geo-top-list"></ol>
+            </div>
+          </aside>
+        </div>
+      </section>
+      <div class="grid">
+        <section class="panel presence-panel">
+          <div class="toolbar">
+            <h2>Client Presence</h2>
+            <div class="actions">
+              <input id="device-search" placeholder="Search device ID">
+              <select id="device-sort" aria-label="Device sort">
+                <option value="status">Status</option>
+                <option value="updated_at">Last seen</option>
+                <option value="online_since">Online since</option>
+                <option value="current_online">Current online</option>
+                <option value="total_online">Total online</option>
+                <option value="total_control">Total control</option>
+                <option value="total_controlled">Total controlled</option>
+                <option value="location">Location</option>
+                <option value="device_id">Device ID</option>
+              </select>
+              <button id="device-order" class="sort-order" type="button" aria-label="Toggle sort order">DESC</button>
+              <select id="device-limit" aria-label="Devices per page">
+                <option value="10">10 / page</option>
+                <option value="50">50 / page</option>
+                <option value="100">100 / page</option>
+                <option value="200">200 / page</option>
+              </select>
+            </div>
+          </div>
+          <div class="segments" id="device-filters" role="tablist" aria-label="Device filters">
+            <button type="button" data-device-filter="online">Online <span id="device-count-online">0</span></button>
+            <button type="button" data-device-filter="active">Remote <span id="device-count-active">0</span></button>
+            <button type="button" data-device-filter="offline">Offline <span id="device-count-offline">0</span></button>
+            <button type="button" data-device-filter="all">All <span id="device-count-all">0</span></button>
+            <button type="button" data-device-filter="web">Web <span id="device-count-web">0</span></button>
+          </div>
+          <div class="table-wrap">
+            <table class="presence-table">
+              <thead><tr><th>Client</th><th>State</th><th>Location</th><th>Current online</th><th>Detail</th></tr></thead>
+              <tbody id="devices"></tbody>
+            </table>
+          </div>
+          <div class="pager">
+            <button id="device-prev" type="button">Previous</button>
+            <span id="device-page-info">0-0 of 0</span>
+            <button id="device-next" type="button">Next</button>
+          </div>
+        </section>
+        <section class="panel">
+          <div class="toolbar">
+            <h2>Active Sessions</h2>
+            <div class="actions">
+              <input id="session-search" placeholder="Search session or user">
+              <select id="session-limit" aria-label="Sessions per page">
+                <option value="10">10 / page</option>
+                <option value="50">50 / page</option>
+                <option value="100">100 / page</option>
+                <option value="200">200 / page</option>
+              </select>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="sessions-table">
+              <thead><tr><th>Transmission</th><th>Participants</th><th>Action</th></tr></thead>
+              <tbody id="sessions"></tbody>
+            </table>
+          </div>
+          <div class="pager">
+            <button id="session-prev" type="button">Previous</button>
+            <span id="session-page-info">0-0 of 0</span>
+            <button id="session-next" type="button">Next</button>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+  <script defer src="/admin/assets/admin.js"></script>
+</body>
+</html>
