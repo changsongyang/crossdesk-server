@@ -115,6 +115,7 @@ SignalServer::SignalServer() {
   signal_negotiation_->SetSendMsgCallback(std::bind(&SignalServer::SendMsg,
                                                     this, std::placeholders::_1,
                                                     std::placeholders::_2));
+  geo_location_resolver_ = std::make_unique<GeoLocationResolver>();
   presence_manager_ = std::make_unique<PresenceManager>();
   presence_manager_->SetSendMsgCallback(std::bind(&SignalServer::SendMsg, this,
                                                   std::placeholders::_1,
@@ -187,6 +188,7 @@ SignalServer::SignalServer(uint16_t port, std::string certs_dir,
   signal_negotiation_->SetSendMsgCallback(std::bind(&SignalServer::SendMsg,
                                                     this, std::placeholders::_1,
                                                     std::placeholders::_2));
+  geo_location_resolver_ = std::make_unique<GeoLocationResolver>();
   presence_manager_ = std::make_unique<PresenceManager>();
   presence_manager_->SetSendMsgCallback(std::bind(&SignalServer::SendMsg, this,
                                                   std::placeholders::_1,
@@ -206,8 +208,57 @@ SignalServer::SignalServer(uint16_t port, std::string certs_dir,
 
 SignalServer::~SignalServer() {}
 
+std::string SignalServer::GetClientIp(websocketpp::connection_hdl hdl) {
+  try {
+    server::connection_ptr con = server_.get_con_from_hdl(hdl);
+    websocketpp::lib::asio::error_code ec;
+    auto endpoint = con->get_raw_socket().remote_endpoint(ec);
+    if (ec) {
+      LOG_WARN("Failed to get websocket peer endpoint: {}", ec.message());
+      return "";
+    }
+    return endpoint.address().to_string();
+  } catch (const std::exception& e) {
+    LOG_WARN("Failed to get websocket peer endpoint: {}", e.what());
+  }
+  return "";
+}
+
+void SignalServer::RecordClientNetworkInfo(websocketpp::connection_hdl hdl,
+                                           const std::string& device_id) {
+  if (!device_db_manager_ || device_id.empty()) {
+    return;
+  }
+
+  std::string client_ip;
+  auto ip_it = ws_connection_ips_.find(hdl);
+  if (ip_it != ws_connection_ips_.end()) {
+    client_ip = ip_it->second;
+  }
+  if (client_ip.empty()) {
+    client_ip = GetClientIp(hdl);
+  }
+
+  ClientNetworkInfo network_info;
+  network_info.client_ip = client_ip;
+  if (geo_location_resolver_) {
+    network_info = geo_location_resolver_->Resolve(client_ip);
+  }
+  if (device_db_manager_->UpdateDeviceNetworkInfo(device_id, network_info)) {
+    LOG_INFO("Client [{}] network info: ip [{}], location [{}]", device_id,
+             network_info.client_ip,
+             network_info.location.empty() ? "Unknown"
+                                           : network_info.location);
+  }
+}
+
 bool SignalServer::OnOpen(websocketpp::connection_hdl hdl) {
-  ws_connections_[hdl] = ws_connection_id_++;
+  connection_id conn_id = ws_connection_id_++;
+  ws_connections_[hdl] = conn_id;
+  std::string client_ip = GetClientIp(hdl);
+  ws_connection_ips_[hdl] = client_ip;
+  LOG_INFO("Websocket connection [{}] opened from [{}]", conn_id,
+           client_ip.empty() ? "Unknown" : client_ip);
   return true;
 }
 
@@ -228,6 +279,7 @@ bool SignalServer::OnClose(websocketpp::connection_hdl hdl) {
     presence_manager_->OnLogout(user_id);
   }
   ws_connections_.erase(hdl);
+  ws_connection_ips_.erase(hdl);
   return true;
 }
 
@@ -248,6 +300,7 @@ bool SignalServer::OnFail(websocketpp::connection_hdl hdl) {
     presence_manager_->OnLogout(user_id);
   }
   ws_connections_.erase(hdl);
+  ws_connection_ips_.erase(hdl);
   return true;
 }
 
@@ -512,6 +565,7 @@ void SignalServer::OnMessage(websocketpp::connection_hdl hdl,
           std::string id = transmission_manager_->GetUserId(hdl);
           if (!id.empty()) {
             presence_manager_->OnLogin(id, id, hdl);
+            RecordClientNetworkInfo(hdl, id);
           }
         }
         break;

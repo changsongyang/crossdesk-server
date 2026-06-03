@@ -37,6 +37,19 @@ struct OnlineDeviceInfo {
   int64_t active_controlled_count = 0;
   std::vector<std::string> active_control_targets;
   std::vector<std::string> active_controlled_by;
+  std::string client_ip;
+  std::string country;
+  std::string region;
+  std::string city;
+  std::string location;
+};
+
+struct ClientNetworkInfo {
+  std::string client_ip;
+  std::string country;
+  std::string region;
+  std::string city;
+  std::string location;
 };
 
 struct OnlineDurationStats {
@@ -71,6 +84,8 @@ class DeviceDBManager {
   bool RemoveDevice(const std::string& device_id);
 
   bool SetDeviceOnline(const std::string& device_id, bool online);
+  bool UpdateDeviceNetworkInfo(const std::string& device_id,
+                               const ClientNetworkInfo& network_info);
   bool RecordRuntimeHeartbeat();
   bool StartRemoteControlSession(const std::string& transmission_id,
                                  const std::string& host_id,

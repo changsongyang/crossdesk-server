@@ -128,6 +128,8 @@ std::string DevicePresenceSortClause(const std::string& sort,
     expression = "total_controlled_seconds";
   } else if (normalized == "active_sessions") {
     expression = "active_session_count";
+  } else if (normalized == "location") {
+    expression = "geo_location";
   }
 
   return expression + " " + direction +
@@ -161,6 +163,23 @@ void EnsureIntegerColumn(sqlite3* db, const std::string& table,
 
   std::string sql = "ALTER TABLE " + table + " ADD COLUMN " + column +
                     " INTEGER NOT NULL DEFAULT 0;";
+  char* err_msg = nullptr;
+  if (sqlite3_exec(db, sql.c_str(), nullptr, nullptr, &err_msg) != SQLITE_OK) {
+    std::string error = SqliteExecError(db, err_msg);
+    sqlite3_free(err_msg);
+    throw std::runtime_error("Failed to add " + table + "." + column +
+                             " column: " + error);
+  }
+}
+
+void EnsureTextColumn(sqlite3* db, const std::string& table,
+                      const std::string& column) {
+  if (ColumnExists(db, table, column)) {
+    return;
+  }
+
+  std::string sql = "ALTER TABLE " + table + " ADD COLUMN " + column +
+                    " TEXT NOT NULL DEFAULT '';";
   char* err_msg = nullptr;
   if (sqlite3_exec(db, sql.c_str(), nullptr, nullptr, &err_msg) != SQLITE_OK) {
     std::string error = SqliteExecError(db, err_msg);
@@ -312,6 +331,11 @@ void DeviceDBManager::InitDB() {
   EnsureIntegerColumn(db_, "device_presence", "total_online_seconds");
   EnsureIntegerColumn(db_, "device_presence", "total_control_seconds");
   EnsureIntegerColumn(db_, "device_presence", "total_controlled_seconds");
+  EnsureTextColumn(db_, "device_presence", "client_ip");
+  EnsureTextColumn(db_, "device_presence", "geo_country");
+  EnsureTextColumn(db_, "device_presence", "geo_region");
+  EnsureTextColumn(db_, "device_presence", "geo_city");
+  EnsureTextColumn(db_, "device_presence", "geo_location");
 
   const char* sql_presence_backfill =
       "UPDATE device_presence SET online_since = updated_at "
@@ -868,6 +892,50 @@ bool DeviceDBManager::SetDeviceOnline(const std::string& device_id,
   return ok;
 }
 
+bool DeviceDBManager::UpdateDeviceNetworkInfo(
+    const std::string& device_id, const ClientNetworkInfo& network_info) {
+  std::lock_guard<std::recursive_mutex> lock(db_mutex_);
+  if (db_ == nullptr) {
+    LOG_ERROR("Database is not initialized in UpdateDeviceNetworkInfo.");
+    return false;
+  }
+  if (device_id.empty()) {
+    return false;
+  }
+
+  const char* sql =
+      "INSERT INTO device_presence "
+      "(device_id, online, updated_at, online_since, total_online_seconds, "
+      "client_ip, geo_country, geo_region, geo_city, geo_location) "
+      "VALUES (?, 0, CAST(strftime('%s','now') AS INTEGER), 0, 0, ?, ?, ?, ?, "
+      "?) "
+      "ON CONFLICT(device_id) DO UPDATE SET "
+      "client_ip=excluded.client_ip, "
+      "geo_country=excluded.geo_country, "
+      "geo_region=excluded.geo_region, "
+      "geo_city=excluded.geo_city, "
+      "geo_location=excluded.geo_location;";
+
+  sqlite3_stmt* stmt = nullptr;
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    return false;
+  }
+  sqlite3_bind_text(stmt, 1, device_id.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 2, network_info.client_ip.c_str(), -1,
+                    SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 3, network_info.country.c_str(), -1,
+                    SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 4, network_info.region.c_str(), -1,
+                    SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 5, network_info.city.c_str(), -1,
+                    SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 6, network_info.location.c_str(), -1,
+                    SQLITE_TRANSIENT);
+  bool ok = (sqlite3_step(stmt) == SQLITE_DONE);
+  sqlite3_finalize(stmt);
+  return ok;
+}
+
 bool DeviceDBManager::StartRemoteControlSession(
     const std::string& transmission_id, const std::string& host_id,
     const std::string& guest_id) {
@@ -1371,7 +1439,8 @@ std::vector<OnlineDeviceInfo> DeviceDBManager::ListOnlineDevices(
       "WHERE " +
       NormalizedRemoteDeviceExpr("host_id") +
       " = device_presence.device_id), 0) "
-      "AS total_controlled_seconds "
+      "AS total_controlled_seconds, "
+      "client_ip, geo_country, geo_region, geo_city, geo_location "
       "FROM device_presence "
       "WHERE online = 1 "
       "AND device_id NOT LIKE 'web-%' "
@@ -1405,6 +1474,11 @@ std::vector<OnlineDeviceInfo> DeviceDBManager::ListOnlineDevices(
     info.total_online_seconds = sqlite3_column_int64(stmt, 5);
     info.total_control_seconds = sqlite3_column_int64(stmt, 6);
     info.total_controlled_seconds = sqlite3_column_int64(stmt, 7);
+    info.client_ip = ColumnText(stmt, 8);
+    info.country = ColumnText(stmt, 9);
+    info.region = ColumnText(stmt, 10);
+    info.city = ColumnText(stmt, 11);
+    info.location = ColumnText(stmt, 12);
     result.push_back(info);
   }
   sqlite3_finalize(stmt);
@@ -1495,7 +1569,8 @@ std::vector<OnlineDeviceInfo> DeviceDBManager::ListDevicePresence(
       "OR " +
       NormalizedRemoteDeviceExpr("host_id") +
       " = device_presence.device_id), 0) "
-      "AS active_session_count "
+      "AS active_session_count, "
+      "client_ip, geo_country, geo_region, geo_city, geo_location "
       "FROM device_presence "
       "WHERE " +
       DevicePresenceFilterClause(filter);
@@ -1535,6 +1610,11 @@ std::vector<OnlineDeviceInfo> DeviceDBManager::ListDevicePresence(
     info.active_controlled_count = sqlite3_column_int64(stmt, 11);
     info.active_control_targets = SplitCommaSeparatedIds(ColumnText(stmt, 12));
     info.active_controlled_by = SplitCommaSeparatedIds(ColumnText(stmt, 13));
+    info.client_ip = ColumnText(stmt, 15);
+    info.country = ColumnText(stmt, 16);
+    info.region = ColumnText(stmt, 17);
+    info.city = ColumnText(stmt, 18);
+    info.location = ColumnText(stmt, 19);
     result.push_back(info);
   }
   sqlite3_finalize(stmt);

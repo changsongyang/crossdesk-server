@@ -119,6 +119,10 @@ int main() {
   {
     DeviceDBManager db(db_path.string());
     db.SetDeviceOnline("device-admin-1", true);
+    db.UpdateDeviceNetworkInfo(
+        "device-admin-1",
+        {"203.0.113.8", "Testland", "Test Region", "Test City",
+         "Test City, Test Region, Testland"});
     db.SetDeviceOnline("device-admin-offline", true);
     db.SetDeviceOnline("device-admin-offline", false);
     db.SetDeviceOnline("device-admin-control", true);
@@ -151,6 +155,13 @@ int main() {
            "overview reports device total control duration");
     expect(db_overview_body["devices"][0].contains("total_controlled_seconds"),
            "overview reports device total controlled duration");
+    expect(db_overview_body["devices"][0]["client_ip"] == "203.0.113.8",
+           "overview reports device client ip");
+    expect(db_overview_body["devices"][0]["geo_city"] == "Test City",
+           "overview reports device geo city");
+    expect(db_overview_body["devices"][0]["geo_location"] ==
+               "Test City, Test Region, Testland",
+           "overview reports device geo location");
     expect(db_overview_body["devices"][0].contains("current_control_seconds"),
            "overview reports device current control duration");
     expect(db_overview_body["devices"][0].contains(

@@ -19,6 +19,7 @@
 #include "admin_auth.h"
 #include "admin_controller.h"
 #include "device_db_manager.h"
+#include "geo_location_resolver.h"
 #include "presence_manager.h"
 #include "signal_negotiation.h"
 
@@ -50,6 +51,9 @@ class SignalServer {
  private:
   void ScheduleRuntimeHeartbeat();
   void ScheduleRecoveredSessionCleanup();
+  std::string GetClientIp(websocketpp::connection_hdl hdl);
+  void RecordClientNetworkInfo(websocketpp::connection_hdl hdl,
+                               const std::string& device_id);
 
   server server_;
   uint16_t port_ = 9090;
@@ -58,11 +62,15 @@ class SignalServer {
   std::map<websocketpp::connection_hdl, connection_id,
            std::owner_less<websocketpp::connection_hdl>>
       ws_connections_;
+  std::map<websocketpp::connection_hdl, std::string,
+           std::owner_less<websocketpp::connection_hdl>>
+      ws_connection_ips_;
   unsigned int ws_connection_id_ = 0;
 
   std::shared_ptr<TransmissionManager> transmission_manager_;
   std::unique_ptr<DeviceDBManager> device_db_manager_;
   std::unique_ptr<SignalNegotiation> signal_negotiation_;
+  std::unique_ptr<GeoLocationResolver> geo_location_resolver_;
   std::unique_ptr<PresenceManager> presence_manager_;
   std::unique_ptr<AdminAuth> admin_auth_;
   std::unique_ptr<AdminController> admin_controller_;

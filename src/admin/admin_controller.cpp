@@ -170,15 +170,16 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
     .segments button.active { background: #1264a3; border-color: #1264a3; color: #ffffff; }
     .presence-table { table-layout: fixed; }
     .presence-table th, .presence-table td { min-width: 0; overflow-wrap: anywhere; }
-    .presence-table th:nth-child(1), .presence-table td:nth-child(1) { width: 27%; }
-    .presence-table th:nth-child(2), .presence-table td:nth-child(2) { width: 13%; }
-    .presence-table th:nth-child(3), .presence-table td:nth-child(3) { width: 20%; }
-    .presence-table th:nth-child(4), .presence-table td:nth-child(4) { width: 16%; }
-    .presence-table th:nth-child(5), .presence-table td:nth-child(5) { width: 11%; }
-    .presence-table th:nth-child(6), .presence-table td:nth-child(6) { width: 13%; }
-    .presence-table th:nth-child(5), .presence-table td:nth-child(5),
-    .presence-table th:nth-child(6), .presence-table td:nth-child(6) { overflow-wrap: normal; }
-    .presence-table td:nth-child(6) button { min-width: 0; padding: 6px 8px; white-space: nowrap; width: 100%; }
+    .presence-table th:nth-child(1), .presence-table td:nth-child(1) { width: 23%; }
+    .presence-table th:nth-child(2), .presence-table td:nth-child(2) { width: 10%; }
+    .presence-table th:nth-child(3), .presence-table td:nth-child(3) { width: 18%; }
+    .presence-table th:nth-child(4), .presence-table td:nth-child(4) { width: 17%; }
+    .presence-table th:nth-child(5), .presence-table td:nth-child(5) { width: 13%; }
+    .presence-table th:nth-child(6), .presence-table td:nth-child(6) { width: 9%; }
+    .presence-table th:nth-child(7), .presence-table td:nth-child(7) { width: 10%; }
+    .presence-table th:nth-child(6), .presence-table td:nth-child(6),
+    .presence-table th:nth-child(7), .presence-table td:nth-child(7) { overflow-wrap: normal; }
+    .presence-table td:nth-child(7) button { min-width: 0; padding: 6px 8px; white-space: nowrap; width: 100%; }
     .sessions-table td:nth-child(1), .sessions-table td:nth-child(2) { word-break: break-all; }
     .device-id { font-weight: 600; word-break: break-all; }
     .subline { display: block; color: #667085; font-size: 12px; margin-top: 3px; }
@@ -298,6 +299,7 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
                 <option value="total_online">Total online</option>
                 <option value="total_control">Total control</option>
                 <option value="total_controlled">Total controlled</option>
+                <option value="location">Location</option>
                 <option value="device_id">Device ID</option>
               </select>
               <button id="device-order" class="sort-order" type="button" aria-label="Toggle sort order">DESC</button>
@@ -317,7 +319,7 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
           </div>
           <div class="table-wrap">
             <table class="presence-table">
-              <thead><tr><th>Client</th><th>State</th><th>Seen</th><th>Current online</th><th>Session</th><th>Action</th></tr></thead>
+              <thead><tr><th>Client</th><th>State</th><th>Location</th><th>Seen</th><th>Current online</th><th>Session</th><th>Action</th></tr></thead>
               <tbody id="devices"></tbody>
             </table>
           </div>
@@ -503,6 +505,12 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
       return Array.isArray(value) && value.length ? value.join(', ') : '-';
     }
 
+    function locationLabel(device) {
+      if (device.geo_location) return device.geo_location;
+      if (device.client_ip) return 'Unknown';
+      return '-';
+    }
+
     function activeDuration(value, activeCount) {
       return Number(activeCount) > 0 ? formatDuration(value) : '-';
     }
@@ -525,7 +533,7 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
       const body = document.getElementById('devices');
       body.textContent = '';
       if (!devices.length) {
-        appendEmptyRow(body, 6);
+        appendEmptyRow(body, 7);
         return;
       }
       const capturedAt = Math.floor(Date.now() / 1000);
@@ -546,6 +554,12 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
           device.online ? 'online' : 'offline');
         if (activeSessions > 0) appendBadge(statusCell, 'remote', 'active');
         row.appendChild(statusCell);
+
+        const locationCell = document.createElement('td');
+        labelCell(locationCell, 'Location');
+        appendText(locationCell, 'div', locationLabel(device));
+        appendText(locationCell, 'span', device.client_ip || '-', 'muted');
+        row.appendChild(locationCell);
 
         const timeCell = document.createElement('td');
         labelCell(timeCell, 'Seen');
@@ -576,7 +590,7 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
           const detailsRow = document.createElement('tr');
           detailsRow.className = 'details-row';
           const detailsCell = document.createElement('td');
-          detailsCell.colSpan = 6;
+          detailsCell.colSpan = 7;
           const details = document.createElement('div');
           details.className = 'detail-grid';
           const currentOnline = appendDetailItem(
@@ -611,6 +625,11 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
           setDurationDataset(totalControlled, 'total-controlled', device,
             device.total_controlled_seconds, capturedAt,
             activeControlledCount > 0, activeControlledCount);
+          appendDetailItem(details, 'Location', locationLabel(device));
+          appendDetailItem(details, 'Client IP', device.client_ip || '-');
+          appendDetailItem(details, 'City', device.geo_city || '-');
+          appendDetailItem(details, 'Region', device.geo_region || '-');
+          appendDetailItem(details, 'Country', device.geo_country || '-');
           appendDetailItem(details, 'Online since', formatTime(device.online_since));
           appendDetailItem(details, 'Last online', formatTime(device.online ? 0 : device.updated_at));
           appendDetailItem(details, 'Active session', sessionSummary(device));
@@ -1120,6 +1139,11 @@ AdminHttpResponse AdminController::HandleOverview(
                           device.total_control_seconds},
                          {"total_controlled_seconds",
                           device.total_controlled_seconds},
+                         {"client_ip", device.client_ip},
+                         {"geo_country", device.country},
+                         {"geo_region", device.region},
+                         {"geo_city", device.city},
+                         {"geo_location", device.location},
                          {"current_control_seconds",
                           device.current_control_seconds},
                          {"current_controlled_seconds",
