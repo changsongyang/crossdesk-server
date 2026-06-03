@@ -2,12 +2,15 @@
 
 #include <asio.hpp>
 
+#include <chrono>
 #include <cstdlib>
 #include <iostream>
 #include <string>
 #include <thread>
 
 namespace {
+
+constexpr char kTestIp[] = "8.8.8.8";
 
 void SetEnv(const char* name, const std::string& value) {
 #ifdef _WIN32
@@ -25,15 +28,12 @@ void UnsetEnv(const char* name) {
 #endif
 }
 
-void ServeOneResponse(asio::ip::tcp::acceptor* acceptor,
-                      const std::string& body,
-                      std::string* request_line) {
-  asio::ip::tcp::socket socket(acceptor->get_executor());
-  acceptor->accept(socket);
-
+void ReadRequestAndWriteResponse(asio::ip::tcp::socket* socket,
+                                 const std::string& body,
+                                 std::string* request_line) {
   asio::streambuf request;
   asio::error_code ec;
-  asio::read_until(socket, request, "\r\n\r\n", ec);
+  asio::read_until(*socket, request, "\r\n\r\n", ec);
   std::istream request_stream(&request);
   std::getline(request_stream, *request_line);
   if (!request_line->empty() && request_line->back() == '\r') {
@@ -43,25 +43,44 @@ void ServeOneResponse(asio::ip::tcp::acceptor* acceptor,
   std::string response =
       "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nContent-Length: " +
       std::to_string(body.size()) + "\r\n\r\n" + body;
-  asio::write(socket, asio::buffer(response), ec);
+  asio::write(*socket, asio::buffer(response), ec);
+}
+
+void ServeOneResponse(asio::ip::tcp::acceptor* acceptor,
+                      const std::string& body,
+                      std::string* request_line) {
+  asio::ip::tcp::socket socket(acceptor->get_executor());
+  acceptor->accept(socket);
+  ReadRequestAndWriteResponse(&socket, body, request_line);
+}
+
+bool TryServeOneResponse(asio::ip::tcp::acceptor* acceptor,
+                         const std::string& body,
+                         std::string* request_line,
+                         std::chrono::milliseconds timeout) {
+  asio::error_code ec;
+  acceptor->non_blocking(true, ec);
+  auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    asio::ip::tcp::socket socket(acceptor->get_executor());
+    acceptor->accept(socket, ec);
+    if (!ec) {
+      ReadRequestAndWriteResponse(&socket, body, request_line);
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  return false;
 }
 
 struct ResolveResult {
   ClientNetworkInfo info;
   std::string request_line;
+  bool accepted = true;
+  bool retryable = false;
 };
 
-ResolveResult ResolveWithStub(const std::string& body,
-                              const std::string& path = "") {
-  asio::io_context io;
-  asio::ip::tcp::acceptor acceptor(
-      io, {asio::ip::address_v4::loopback(), 0});
-  const auto port = acceptor.local_endpoint().port();
-
-  std::string request_line;
-  std::thread server(
-      [&]() { ServeOneResponse(&acceptor, body, &request_line); });
-
+void ConfigureGeoEnv(unsigned short port, const std::string& path = "") {
   SetEnv("CROSSDESK_GEOIP_LOOKUP", "1");
   SetEnv("CROSSDESK_GEOIP_KEY", "unit-key");
   SetEnv("CROSSDESK_GEOIP_SCHEME", "http");
@@ -72,11 +91,56 @@ ResolveResult ResolveWithStub(const std::string& body,
   } else {
     SetEnv("CROSSDESK_GEOIP_PATH", path);
   }
+}
 
-  GeoLocationResolver resolver;
-  ResolveResult result{resolver.Resolve("8.8.8.8"), ""};
+ResolveResult ResolveWithStub(GeoLocationResolver* resolver,
+                              const std::string& body,
+                              const std::string& path = "") {
+  asio::io_context io;
+  asio::ip::tcp::acceptor acceptor(
+      io, {asio::ip::address_v4::loopback(), 0});
+  const auto port = acceptor.local_endpoint().port();
+
+  std::string request_line;
+  std::thread server(
+      [&]() { ServeOneResponse(&acceptor, body, &request_line); });
+
+  ConfigureGeoEnv(port, path);
+
+  GeoLocationResolveResult resolve = resolver->ResolveWithRetryInfo(kTestIp);
+  ResolveResult result{resolve.info, "", true, resolve.retryable};
   server.join();
   result.request_line = request_line;
+  return result;
+}
+
+ResolveResult ResolveWithStub(const std::string& body,
+                              const std::string& path = "") {
+  GeoLocationResolver resolver;
+  return ResolveWithStub(&resolver, body, path);
+}
+
+ResolveResult ResolveWithTimedStub(GeoLocationResolver* resolver,
+                                   const std::string& body,
+                                   std::chrono::milliseconds timeout) {
+  asio::io_context io;
+  asio::ip::tcp::acceptor acceptor(
+      io, {asio::ip::address_v4::loopback(), 0});
+  const auto port = acceptor.local_endpoint().port();
+
+  std::string request_line;
+  bool accepted = false;
+  std::thread server([&]() {
+    accepted = TryServeOneResponse(&acceptor, body, &request_line, timeout);
+  });
+
+  ConfigureGeoEnv(port);
+
+  GeoLocationResolveResult resolve = resolver->ResolveWithRetryInfo(kTestIp);
+  ResolveResult result{resolve.info, "", false, resolve.retryable};
+  server.join();
+  result.request_line = request_line;
+  result.accepted = accepted;
   return result;
 }
 
@@ -118,6 +182,26 @@ int main() {
          "resolver falls back to country code");
   expect(country_only.info.location == "US",
          "resolver falls back to country-only location");
+
+  GeoLocationResolver retry_resolver;
+  ResolveResult empty_first = ResolveWithStub(&retry_resolver, R"({})");
+  expect(empty_first.info.location.empty(),
+         "empty GeoIP responses are treated as unresolved");
+  expect(empty_first.retryable,
+         "empty GeoIP responses are marked retryable");
+  ResolveResult retry_success =
+      ResolveWithStub(&retry_resolver, R"({"country_code":"US"})");
+  expect(retry_success.accepted,
+         "empty GeoIP cache entry performs another lookup");
+  expect(retry_success.info.location == "US",
+         "empty GeoIP cache entry can be replaced by a success");
+  ResolveResult cached_success = ResolveWithTimedStub(
+      &retry_resolver, R"({"country_code":"CA"})",
+      std::chrono::milliseconds(20));
+  expect(!cached_success.accepted,
+         "successful GeoIP results are cached by ip");
+  expect(cached_success.info.location == "US",
+         "successful GeoIP cache returns the original location");
 
   return failures == 0 ? 0 : 1;
 }

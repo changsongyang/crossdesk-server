@@ -2,9 +2,7 @@
 #define _ADMIN_CONTROLLER_H_
 
 #include <functional>
-#include <chrono>
 #include <memory>
-#include <mutex>
 #include <nlohmann/json.hpp>
 #include <string>
 #include <utility>
@@ -53,7 +51,7 @@ class AdminController {
 
   bool IsAuthorized(const AdminHttpRequest& request);
   nlohmann::json BuildStats(size_t online_device_fallback) const;
-  ClientGeoDistribution GetCachedGeoDistribution() const;
+  ClientGeoDistribution GetCurrentGeoDistribution() const;
   AdminHttpResponse JsonResponse(int status, const nlohmann::json& body) const;
   AdminHttpResponse HtmlResponse(int status, const std::string& body) const;
   AdminHttpResponse ErrorResponse(int status, const std::string& error) const;
@@ -63,9 +61,6 @@ class AdminController {
   std::shared_ptr<TransmissionManager> transmission_;
   DeviceDBManager* db_ = nullptr;
   std::function<void(const std::string&, nlohmann::json)> send_to_user_;
-  mutable std::mutex geo_cache_mutex_;
-  mutable ClientGeoDistribution geo_cache_;
-  mutable std::chrono::steady_clock::time_point geo_cache_expires_at_{};
 };
 
 #endif  // _ADMIN_CONTROLLER_H_

@@ -44,6 +44,14 @@ class PresenceManager {
   bool IsOnline(const std::string& device_id) const;
   size_t GetOnlineDeviceCount() const;
   size_t GetOnlineWebClientCount() const;
+  void SetDeviceNetworkInfo(const std::string& device_id,
+                            const ClientNetworkInfo& network_info);
+  bool GetDeviceNetworkInfo(const std::string& device_id,
+                            ClientNetworkInfo* network_info) const;
+  bool HasDeviceWithClientIp(const std::string& client_ip) const;
+  size_t UpdateDevicesWithClientIp(const std::string& client_ip,
+                                   const ClientNetworkInfo& network_info);
+  ClientGeoDistribution GetClientGeoDistribution() const;
   std::vector<std::pair<std::string, bool>> BatchQuery(
       const std::vector<std::string>& device_ids) const;
   void NotifyUserDevices(const std::string& user_id,
@@ -61,6 +69,8 @@ class PresenceManager {
   mutable std::mutex online_devices_mutex_;
   std::unordered_set<std::string> online_devices_;
   std::unordered_set<std::string> online_web_clients_;
+  mutable std::mutex network_info_mutex_;
+  std::unordered_map<std::string, ClientNetworkInfo> device_network_info_;
 };
 
 #endif

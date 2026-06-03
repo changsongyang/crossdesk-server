@@ -10,6 +10,7 @@
 
 #include "admin_auth.h"
 #include "device_db_manager.h"
+#include "presence_manager.h"
 #include "transmission_manager.h"
 
 int main() {
@@ -137,20 +138,31 @@ int main() {
        ".db");
   {
     DeviceDBManager db(db_path.string());
-    db.SetDeviceOnline("device-admin-1", true);
+    PresenceManager presence;
+    presence.SetDeviceDB(&db);
+    websocketpp::connection_hdl hdl;
+    presence.OnLogin("device-admin-1", "device-admin-1", hdl);
     db.UpdateDeviceNetworkInfo(
+        "device-admin-1",
+        {"10.0.0.1", "Stale Country", "Stale Region", "Stale City",
+         "Stale City, Stale Region, Stale Country"});
+    presence.SetDeviceNetworkInfo(
         "device-admin-1",
         {"203.0.113.8", "Testland", "Test Region", "Test City",
          "Test City, Test Region, Testland"});
-    db.SetDeviceOnline("device-admin-zhejiang", true);
-    db.UpdateDeviceNetworkInfo(
+    presence.OnLogin("device-admin-zhejiang", "device-admin-zhejiang", hdl);
+    presence.SetDeviceNetworkInfo(
         "device-admin-zhejiang",
         {"198.51.100.8", "China", "Zhejiang", "Hangzhou",
          "Hangzhou, Zhejiang, China"});
-    db.SetDeviceOnline("device-admin-offline", true);
-    db.SetDeviceOnline("device-admin-offline", false);
-    db.SetDeviceOnline("device-admin-control", true);
-    db.SetDeviceOnline("web-admin-1", true);
+    presence.OnLogin("device-admin-offline", "device-admin-offline", hdl);
+    presence.SetDeviceNetworkInfo(
+        "device-admin-offline",
+        {"203.0.113.9", "Offline Country", "Offline Region", "Offline City",
+         "Offline City, Offline Region, Offline Country"});
+    presence.OnLogout("device-admin-offline");
+    presence.OnLogin("device-admin-control", "device-admin-control", hdl);
+    presence.OnLogin("web-admin-1", "web-admin-1", hdl);
     db.StartRemoteControlSession("tx-admin", "device-admin-1",
                                  "device-admin-offline");
     db.EndRemoteControlSession("tx-admin", "device-admin-1",
@@ -159,7 +171,7 @@ int main() {
                                  "device-admin-offline");
     db.StartRemoteControlSession("tx-admin-clone", "device-admin-1",
                                  "C-device-admin-control");
-    AdminController db_controller(&auth, nullptr, transmission, &db,
+    AdminController db_controller(&auth, &presence, transmission, &db,
                                   [](const std::string&, nlohmann::json) {});
     AdminHttpResponse db_overview = db_controller.Handle(
         {"GET", "/api/admin/overview?device_search=device-admin-1", "",
@@ -180,12 +192,12 @@ int main() {
     expect(db_overview_body["devices"][0].contains("total_controlled_seconds"),
            "overview reports device total controlled duration");
     expect(db_overview_body["devices"][0]["client_ip"] == "203.0.113.8",
-           "overview reports device client ip");
+           "overview reports current in-memory device client ip");
     expect(db_overview_body["devices"][0]["geo_city"] == "Test City",
-           "overview reports device geo city");
+           "overview reports current in-memory device geo city");
     expect(db_overview_body["devices"][0]["geo_location"] ==
                "Test City, Test Region, Testland",
-           "overview reports device geo location");
+           "overview ignores stale database geo location");
     expect(db_overview_body["devices"][0].contains("current_control_seconds"),
            "overview reports device current control duration");
     expect(db_overview_body["devices"][0].contains(
@@ -236,6 +248,8 @@ int main() {
            "overview reports last online timestamp for offline device");
     expect(offline_body["devices"][0]["online_duration_seconds"] == 0,
            "overview reports zero current duration for offline device");
+    expect(offline_body["devices"][0]["client_ip"] == "",
+           "overview clears transient network info for offline device");
 
     AdminHttpResponse active_overview = db_controller.Handle(
         {"GET",

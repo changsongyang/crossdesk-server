@@ -1,6 +1,9 @@
 #include "signal_server.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -15,6 +18,39 @@ namespace {
 constexpr long kRuntimeHeartbeatIntervalMs = 5000;
 constexpr long kRecoveredSessionCleanupDelayMs = 120000;
 constexpr size_t kMaxClientNetworkInfoJobs = 1024;
+constexpr int kDefaultGeoIpFailureTtlMs = 60000;
+constexpr int kDefaultGeoIpFailureMaxTtlMs = 1800000;
+
+int EnvMillis(const char* name, int fallback, int min_value, int max_value) {
+  const char* raw = std::getenv(name);
+  if (!raw) {
+    return fallback;
+  }
+  char* end = nullptr;
+  long value = std::strtol(raw, &end, 10);
+  if (end == raw || value < min_value || value > max_value) {
+    return fallback;
+  }
+  return static_cast<int>(value);
+}
+
+std::chrono::milliseconds GeoIpFailureRetryDelay(int failure_count) {
+  int64_t delay_ms =
+      EnvMillis("CROSSDESK_GEOIP_FAILURE_TTL_MS",
+                kDefaultGeoIpFailureTtlMs, 0, 3600000);
+  int64_t max_delay_ms =
+      EnvMillis("CROSSDESK_GEOIP_FAILURE_MAX_TTL_MS",
+                kDefaultGeoIpFailureMaxTtlMs, 0, 86400000);
+  max_delay_ms = std::max(delay_ms, max_delay_ms);
+  if (delay_ms <= 0) {
+    return std::chrono::milliseconds(0);
+  }
+
+  for (int i = 1; i < failure_count && delay_ms < max_delay_ms; ++i) {
+    delay_ms = delay_ms > max_delay_ms / 2 ? max_delay_ms : delay_ms * 2;
+  }
+  return std::chrono::milliseconds(delay_ms);
+}
 
 void SetJsonResponse(server::connection_ptr con,
                      websocketpp::http::status_code::value status,
@@ -229,7 +265,7 @@ std::string SignalServer::GetClientIp(websocketpp::connection_hdl hdl) {
 
 void SignalServer::EnqueueClientNetworkInfo(websocketpp::connection_hdl hdl,
                                             const std::string& device_id) {
-  if (!device_db_manager_ || device_id.empty()) {
+  if (!presence_manager_ || device_id.empty()) {
     return;
   }
 
@@ -242,33 +278,119 @@ void SignalServer::EnqueueClientNetworkInfo(websocketpp::connection_hdl hdl,
     client_ip = GetClientIp(hdl);
   }
 
+  ClientNetworkInfo network_info;
+  network_info.client_ip = client_ip;
+  presence_manager_->SetDeviceNetworkInfo(device_id, network_info);
+  EnqueueGeoIpLookup(client_ip, std::chrono::milliseconds(0));
+}
+
+void SignalServer::EnqueueGeoIpLookup(
+    const std::string& client_ip, std::chrono::milliseconds delay) {
+  if (client_ip.empty()) {
+    return;
+  }
+
+  const auto run_at = std::chrono::steady_clock::now() +
+                      std::max(delay, std::chrono::milliseconds(0));
   {
     std::lock_guard<std::mutex> lock(network_info_mutex_);
-    if (network_info_jobs_.size() >= kMaxClientNetworkInfoJobs) {
-      LOG_WARN("Client network info queue is full, dropping [{}]", device_id);
+    if (network_info_stop_) {
       return;
     }
-    network_info_jobs_.push({device_id, client_ip});
+    auto pending = pending_ip_lookup_at_.find(client_ip);
+    if (pending != pending_ip_lookup_at_.end()) {
+      return;
+    }
+    if (network_info_jobs_.size() >= kMaxClientNetworkInfoJobs) {
+      LOG_WARN("GeoIP lookup queue is full, dropping [{}]", client_ip);
+      return;
+    }
+    pending_ip_lookup_at_[client_ip] = run_at;
+    network_info_jobs_.push({client_ip, run_at});
   }
   network_info_cv_.notify_one();
 }
 
-void SignalServer::RecordClientNetworkInfo(const std::string& client_ip,
-                                           const std::string& device_id) {
-  if (!device_db_manager_ || device_id.empty()) {
+void SignalServer::ProcessGeoIpLookup(const GeoIpLookupJob& job) {
+  {
+    std::lock_guard<std::mutex> lock(network_info_mutex_);
+    auto pending = pending_ip_lookup_at_.find(job.client_ip);
+    if (pending == pending_ip_lookup_at_.end() ||
+        pending->second != job.run_at) {
+      return;
+    }
+  }
+
+  if (!presence_manager_ ||
+      !presence_manager_->HasDeviceWithClientIp(job.client_ip)) {
+    std::lock_guard<std::mutex> lock(network_info_mutex_);
+    pending_ip_lookup_at_.erase(job.client_ip);
+    geo_ip_failure_counts_.erase(job.client_ip);
     return;
   }
 
-  ClientNetworkInfo network_info;
-  network_info.client_ip = client_ip;
+  GeoLocationResolveResult resolve_result;
+  resolve_result.info.client_ip = job.client_ip;
   if (geo_location_resolver_) {
-    network_info = geo_location_resolver_->Resolve(client_ip);
+    resolve_result = geo_location_resolver_->ResolveWithRetryInfo(
+        job.client_ip);
   }
-  if (device_db_manager_->UpdateDeviceNetworkInfo(device_id, network_info)) {
-    LOG_INFO("Client [{}] network info: ip [{}], location [{}]", device_id,
-             network_info.client_ip,
-             network_info.location.empty() ? "Unknown"
-                                           : network_info.location);
+
+  if (!presence_manager_->HasDeviceWithClientIp(job.client_ip)) {
+    std::lock_guard<std::mutex> lock(network_info_mutex_);
+    pending_ip_lookup_at_.erase(job.client_ip);
+    geo_ip_failure_counts_.erase(job.client_ip);
+    return;
+  }
+
+  const ClientNetworkInfo& network_info = resolve_result.info;
+  if (resolve_result.resolved) {
+    {
+      std::lock_guard<std::mutex> lock(network_info_mutex_);
+      pending_ip_lookup_at_.erase(job.client_ip);
+      geo_ip_failure_counts_.erase(job.client_ip);
+    }
+    size_t updated = presence_manager_->UpdateDevicesWithClientIp(
+        job.client_ip, network_info);
+    LOG_INFO("GeoIP lookup for [{}] resolved [{}] and updated {} client(s)",
+             job.client_ip, network_info.location, updated);
+    return;
+  }
+
+  LOG_INFO("GeoIP lookup for [{}] returned Unknown", job.client_ip);
+  if (!resolve_result.retryable) {
+    std::lock_guard<std::mutex> lock(network_info_mutex_);
+    pending_ip_lookup_at_.erase(job.client_ip);
+    geo_ip_failure_counts_.erase(job.client_ip);
+    return;
+  }
+
+  int failure_count = 0;
+  {
+    std::lock_guard<std::mutex> lock(network_info_mutex_);
+    failure_count = ++geo_ip_failure_counts_[job.client_ip];
+  }
+  std::chrono::milliseconds retry_delay =
+      GeoIpFailureRetryDelay(failure_count);
+  if (retry_delay.count() > 0 &&
+      presence_manager_->HasDeviceWithClientIp(job.client_ip)) {
+    const auto retry_at = std::chrono::steady_clock::now() + retry_delay;
+    {
+      std::lock_guard<std::mutex> lock(network_info_mutex_);
+      pending_ip_lookup_at_.erase(job.client_ip);
+      if (!network_info_stop_ &&
+          network_info_jobs_.size() < kMaxClientNetworkInfoJobs) {
+        pending_ip_lookup_at_[job.client_ip] = retry_at;
+        network_info_jobs_.push({job.client_ip, retry_at});
+      } else {
+        LOG_WARN("GeoIP lookup queue is full, dropping [{}]", job.client_ip);
+      }
+    }
+    network_info_cv_.notify_one();
+  } else {
+    std::lock_guard<std::mutex> lock(network_info_mutex_);
+    pending_ip_lookup_at_.erase(job.client_ip);
+    geo_ip_failure_counts_.erase(job.client_ip);
   }
 }
 
@@ -289,6 +411,10 @@ void SignalServer::StopClientNetworkInfoWorker() {
   {
     std::lock_guard<std::mutex> lock(network_info_mutex_);
     network_info_stop_ = true;
+    decltype(network_info_jobs_) empty_jobs;
+    network_info_jobs_.swap(empty_jobs);
+    pending_ip_lookup_at_.clear();
+    geo_ip_failure_counts_.clear();
   }
   network_info_cv_.notify_all();
   if (network_info_worker_.joinable()) {
@@ -298,20 +424,37 @@ void SignalServer::StopClientNetworkInfoWorker() {
 
 void SignalServer::ProcessClientNetworkInfoJobs() {
   while (true) {
-    ClientNetworkInfoJob job;
+    GeoIpLookupJob job;
     {
       std::unique_lock<std::mutex> lock(network_info_mutex_);
-      network_info_cv_.wait(lock, [this] {
-        return network_info_stop_ || !network_info_jobs_.empty();
-      });
-      if (network_info_stop_ && network_info_jobs_.empty()) {
-        break;
+      while (true) {
+        network_info_cv_.wait(lock, [this] {
+          return network_info_stop_ || !network_info_jobs_.empty();
+        });
+        if (network_info_stop_) {
+          return;
+        }
+
+        const auto run_at = network_info_jobs_.top().run_at;
+        const auto now = std::chrono::steady_clock::now();
+        if (run_at <= now) {
+          job = network_info_jobs_.top();
+          network_info_jobs_.pop();
+          break;
+        }
+
+        network_info_cv_.wait_until(lock, run_at, [this, run_at] {
+          return network_info_stop_ ||
+                 (!network_info_jobs_.empty() &&
+                  network_info_jobs_.top().run_at < run_at);
+        });
+        if (network_info_stop_) {
+          return;
+        }
       }
-      job = std::move(network_info_jobs_.front());
-      network_info_jobs_.pop();
     }
 
-    RecordClientNetworkInfo(job.client_ip, job.device_id);
+    ProcessGeoIpLookup(job);
   }
 }
 

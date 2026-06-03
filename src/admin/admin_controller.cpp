@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cctype>
-#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -24,7 +23,6 @@ constexpr char kDisconnectSuffix[] = "/disconnect";
 constexpr size_t kDefaultPageLimit = 50;
 constexpr size_t kMaxPageLimit = 200;
 constexpr char kAdminAssetPrefix[] = "/admin/assets/";
-constexpr auto kGeoDistributionCacheTtl = std::chrono::seconds(30);
 
 std::string ResourcePath(const std::string& resource) {
   size_t query_pos = resource.find('?');
@@ -141,6 +139,15 @@ std::string QueryStringParam(const std::map<std::string, std::string>& params,
 
 std::string ClientKind(const std::string& device_id) {
   return device_id.rfind("web-", 0) == 0 ? "web" : "device";
+}
+
+ClientNetworkInfo CurrentNetworkInfo(PresenceManager* presence,
+                                     const OnlineDeviceInfo& device) {
+  ClientNetworkInfo network_info;
+  if (presence && device.online) {
+    presence->GetDeviceNetworkInfo(device.device_id, &network_info);
+  }
+  return network_info;
 }
 
 int64_t CountForDeviceFilter(const DevicePresenceCounts& counts,
@@ -492,6 +499,7 @@ AdminHttpResponse AdminController::HandleOverview(
                                  device_filter, device_sort, device_order)) {
       int64_t active_control_count = device.active_control_count;
       int64_t active_controlled_count = device.active_controlled_count;
+      ClientNetworkInfo network_info = CurrentNetworkInfo(presence_, device);
       devices.push_back({{"id", device.device_id},
                          {"online", device.online},
                          {"kind", ClientKind(device.device_id)},
@@ -507,11 +515,11 @@ AdminHttpResponse AdminController::HandleOverview(
                           device.total_control_seconds},
                          {"total_controlled_seconds",
                           device.total_controlled_seconds},
-                         {"client_ip", device.client_ip},
-                         {"geo_country", device.country},
-                         {"geo_region", device.region},
-                         {"geo_city", device.city},
-                         {"geo_location", device.location},
+                         {"client_ip", network_info.client_ip},
+                         {"geo_country", network_info.country},
+                         {"geo_region", network_info.region},
+                         {"geo_city", network_info.city},
+                         {"geo_location", network_info.location},
                          {"current_control_seconds",
                           device.current_control_seconds},
                          {"current_controlled_seconds",
@@ -556,8 +564,7 @@ AdminHttpResponse AdminController::HandleOverview(
   }
 
   nlohmann::json geo_distribution =
-      GeoDistributionJson(db_ ? GetCachedGeoDistribution()
-                              : ClientGeoDistribution{});
+      GeoDistributionJson(GetCurrentGeoDistribution());
 
   nlohmann::json stats = BuildStats(online_device_fallback);
 
@@ -691,20 +698,9 @@ nlohmann::json AdminController::BuildStats(size_t online_device_fallback) const 
            duration_stats.total_controlled_seconds}};
 }
 
-ClientGeoDistribution AdminController::GetCachedGeoDistribution() const {
-  if (!db_) {
-    return {};
-  }
-
-  std::lock_guard<std::mutex> lock(geo_cache_mutex_);
-  auto now = std::chrono::steady_clock::now();
-  if (now < geo_cache_expires_at_) {
-    return geo_cache_;
-  }
-
-  geo_cache_ = db_->GetClientGeoDistribution();
-  geo_cache_expires_at_ = now + kGeoDistributionCacheTtl;
-  return geo_cache_;
+ClientGeoDistribution AdminController::GetCurrentGeoDistribution() const {
+  return presence_ ? presence_->GetClientGeoDistribution()
+                   : ClientGeoDistribution{};
 }
 
 AdminHttpResponse AdminController::JsonResponse(

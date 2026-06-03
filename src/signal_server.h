@@ -7,6 +7,7 @@
 #ifndef _SIGNAL_SERVER_H_
 #define _SIGNAL_SERVER_H_
 
+#include <chrono>
 #include <condition_variable>
 #include <functional>
 #include <map>
@@ -15,6 +16,8 @@
 #include <queue>
 #include <string>
 #include <thread>
+#include <unordered_map>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 #include <websocketpp/config/asio.hpp>
@@ -54,9 +57,17 @@ class SignalServer {
   void OnMessage(websocketpp::connection_hdl hdl, server::message_ptr msg);
 
  private:
-  struct ClientNetworkInfoJob {
-    std::string device_id;
+  struct GeoIpLookupJob {
     std::string client_ip;
+    std::chrono::steady_clock::time_point run_at =
+        std::chrono::steady_clock::now();
+  };
+
+  struct GeoIpLookupJobLater {
+    bool operator()(const GeoIpLookupJob& lhs,
+                    const GeoIpLookupJob& rhs) const {
+      return lhs.run_at > rhs.run_at;
+    }
   };
 
   void ScheduleRuntimeHeartbeat();
@@ -64,8 +75,9 @@ class SignalServer {
   std::string GetClientIp(websocketpp::connection_hdl hdl);
   void EnqueueClientNetworkInfo(websocketpp::connection_hdl hdl,
                                const std::string& device_id);
-  void RecordClientNetworkInfo(const std::string& client_ip,
-                               const std::string& device_id);
+  void EnqueueGeoIpLookup(const std::string& client_ip,
+                          std::chrono::milliseconds delay);
+  void ProcessGeoIpLookup(const GeoIpLookupJob& job);
   void StartClientNetworkInfoWorker();
   void StopClientNetworkInfoWorker();
   void ProcessClientNetworkInfoJobs();
@@ -92,7 +104,12 @@ class SignalServer {
 
   std::mutex network_info_mutex_;
   std::condition_variable network_info_cv_;
-  std::queue<ClientNetworkInfoJob> network_info_jobs_;
+  std::priority_queue<GeoIpLookupJob, std::vector<GeoIpLookupJob>,
+                      GeoIpLookupJobLater>
+      network_info_jobs_;
+  std::unordered_map<std::string, std::chrono::steady_clock::time_point>
+      pending_ip_lookup_at_;
+  std::unordered_map<std::string, int> geo_ip_failure_counts_;
   std::thread network_info_worker_;
   bool network_info_stop_ = false;
 };

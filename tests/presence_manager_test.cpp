@@ -61,6 +61,38 @@ int main() {
   expect(presence.GetOnlineWebClientCount() == 0,
          "web logout decrements web client count");
 
+  presence.SetDeviceNetworkInfo(
+      "device-1",
+      {"203.0.113.8", "Testland", "Test Region", "Test City",
+       "Test City, Test Region, Testland"});
+  ClientNetworkInfo network_info;
+  expect(presence.GetDeviceNetworkInfo("device-1", &network_info) &&
+             network_info.client_ip == "203.0.113.8",
+         "presence stores current device network info in memory");
+  presence.OnLogin("device-2", "device-2", hdl);
+  presence.SetDeviceNetworkInfo("device-2", {"203.0.113.8", "", "", "", ""});
+  expect(presence.HasDeviceWithClientIp("203.0.113.8"),
+         "presence tracks devices by current client ip");
+  expect(presence.UpdateDevicesWithClientIp(
+             "203.0.113.8",
+             {"203.0.113.8", "Sharedland", "Shared Region", "Shared City",
+              "Shared City, Shared Region, Sharedland"}) == 2,
+         "presence updates all current devices sharing an ip");
+  expect(presence.GetDeviceNetworkInfo("device-2", &network_info) &&
+             network_info.location == "Shared City, Shared Region, Sharedland",
+         "presence applies shared ip geo result to all matching devices");
+  auto distribution = presence.GetClientGeoDistribution();
+  expect(distribution.total_count == 2 && distribution.foreign_count == 2,
+         "presence geo distribution uses current online network info");
+  presence.OnLogout("device-1");
+  expect(!presence.GetDeviceNetworkInfo("device-1", &network_info),
+         "presence clears current network info on logout");
+  expect(presence.GetClientGeoDistribution().total_count == 1,
+         "presence geo distribution keeps other devices sharing the ip");
+  presence.OnLogout("device-2");
+  expect(!presence.HasDeviceWithClientIp("203.0.113.8"),
+         "presence drops ip tracking after last matching device logs out");
+
   const auto db_path =
       std::filesystem::temp_directory_path() /
       ("crossdesk_presence_manager_test_" +

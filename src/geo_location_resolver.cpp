@@ -2,6 +2,7 @@
 
 #include <asio.hpp>
 #include <asio/ssl.hpp>
+#include <chrono>
 #include <cstdlib>
 #include <iomanip>
 #include <initializer_list>
@@ -42,17 +43,25 @@ bool PublicLookupEnabled() {
   return value == "1" || value == "true" || value == "on" || value == "yes";
 }
 
-int LookupTimeoutMs() {
-  const char* raw = std::getenv("CROSSDESK_GEOIP_TIMEOUT_MS");
+int EnvMillis(const char* name, int fallback, int min_value, int max_value) {
+  const char* raw = std::getenv(name);
   if (!raw) {
-    return kDefaultTimeoutMs;
+    return fallback;
   }
   char* end = nullptr;
   long value = std::strtol(raw, &end, 10);
-  if (end == raw || value < 200 || value > 5000) {
-    return kDefaultTimeoutMs;
+  if (end == raw || value < min_value || value > max_value) {
+    return fallback;
   }
   return static_cast<int>(value);
+}
+
+int LookupTimeoutMs() {
+  return EnvMillis("CROSSDESK_GEOIP_TIMEOUT_MS", kDefaultTimeoutMs, 200, 5000);
+}
+
+bool HasLocationResult(const ClientNetworkInfo& info) {
+  return !info.location.empty();
 }
 
 std::string UrlEncode(const std::string& value) {
@@ -384,29 +393,46 @@ ClientNetworkInfo ResolvePublicIp(const std::string& ip) {
 }  // namespace
 
 ClientNetworkInfo GeoLocationResolver::Resolve(const std::string& ip) {
+  return ResolveWithRetryInfo(ip).info;
+}
+
+GeoLocationResolveResult GeoLocationResolver::ResolveWithRetryInfo(
+    const std::string& ip) {
+  GeoLocationResolveResult result;
   ClientNetworkInfo info;
   info.client_ip = ip;
   if (ip.empty()) {
-    return info;
+    result.info = info;
+    return result;
   }
 
   {
     std::lock_guard<std::mutex> lock(cache_mutex_);
     auto it = cache_.find(ip);
     if (it != cache_.end()) {
-      return it->second;
+      result.info = it->second;
+      result.resolved = true;
+      return result;
     }
   }
 
+  bool retryable = false;
   if (IsPrivateOrLocalIp(ip)) {
     info.location = "Private network";
-  } else if (PublicLookupEnabled()) {
-    info = ResolvePublicIp(ip);
+  } else {
+    retryable = PublicLookupEnabled();
+    if (retryable) {
+      info = ResolvePublicIp(ip);
+    }
   }
 
-  {
+  if (HasLocationResult(info)) {
     std::lock_guard<std::mutex> lock(cache_mutex_);
     cache_[ip] = info;
   }
-  return info;
+
+  result.info = info;
+  result.resolved = HasLocationResult(info);
+  result.retryable = !result.resolved && retryable;
+  return result;
 }
