@@ -34,14 +34,17 @@
     .geo-tooltip strong { font-size: 14px; margin-bottom: 4px; }
     .geo-tooltip small { color: #cbd5e1; margin-top: 2px; }
     .geo-side { display: grid; align-content: start; gap: 14px; min-width: 0; }
-    .geo-stat span, .geo-list-title { color: #667085; display: block; font-size: 12px; }
+    .geo-stat span { color: #667085; display: block; font-size: 12px; }
     .geo-stat strong { display: block; font-size: 28px; margin-top: 3px; }
     .geo-stat small { color: #667085; display: block; font-size: 12px; margin-top: 2px; }
     .geo-list-header { align-items: center; display: flex; gap: 8px; justify-content: space-between; }
+    .geo-list-tabs { display: flex; gap: 4px; min-width: 0; }
+    .geo-list-tab { border-color: transparent; color: #667085; flex: 0 0 auto; font-size: 12px; font-weight: 600; min-height: 28px; padding: 5px 8px; }
+    .geo-list-tab.active { background: #e0f2fe; border-color: #b9e6fe; color: #026aa2; }
     .geo-sort-order { align-items: center; border-color: #d0d5dd; color: #344054; display: inline-flex; flex: 0 0 auto; font-size: 17px; font-weight: 700; height: 32px; justify-content: center; min-height: 32px; padding: 0; width: 32px; }
     .geo-sort-order::before { content: "↓"; line-height: 1; }
     .geo-sort-order.ascending::before { content: "↑"; }
-    .geo-top-list { color: #344054; font-size: 13px; margin: 6px 0 0; max-height: 220px; overflow-y: auto; padding-left: 20px; padding-right: 8px; scrollbar-gutter: stable; }
+    .geo-top-list { color: #344054; font-size: 13px; margin: 6px 0 0; max-height: 236px; overflow-y: auto; padding-left: 20px; padding-right: 8px; scrollbar-gutter: stable; }
     .geo-top-list li { margin: 4px 0; overflow-wrap: anywhere; padding-right: 4px; }
     .grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); gap: 18px; align-items: start; }
     .toolbar { display: flex; gap: 10px; justify-content: space-between; align-items: center; margin-bottom: 12px; min-width: 0; }

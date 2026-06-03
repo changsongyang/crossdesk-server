@@ -57,11 +57,18 @@ struct ProvinceUserCount {
   int64_t count = 0;
 };
 
+struct CountryUserCount {
+  std::string country;
+  int64_t count = 0;
+};
+
 struct ClientGeoDistribution {
   int64_t total_count = 0;
+  int64_t domestic_count = 0;
   int64_t foreign_count = 0;
   int64_t unknown_count = 0;
   std::vector<ProvinceUserCount> provinces;
+  std::vector<CountryUserCount> countries;
 };
 
 struct DevicePresenceCounts {

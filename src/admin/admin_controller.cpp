@@ -174,14 +174,21 @@ int64_t CountForDeviceFilter(const DevicePresenceCounts& counts,
 
 nlohmann::json GeoDistributionJson(const ClientGeoDistribution& distribution) {
   nlohmann::json geo_distribution = {{"total_count", distribution.total_count},
+                                     {"domestic_count",
+                                      distribution.domestic_count},
                                      {"foreign_count",
                                       distribution.foreign_count},
                                      {"unknown_count",
                                       distribution.unknown_count},
-                                     {"provinces", nlohmann::json::array()}};
+                                     {"provinces", nlohmann::json::array()},
+                                     {"countries", nlohmann::json::array()}};
   for (const auto& province : distribution.provinces) {
     geo_distribution["provinces"].push_back(
         {{"province", province.province}, {"count", province.count}});
+  }
+  for (const auto& country : distribution.countries) {
+    geo_distribution["countries"].push_back(
+        {{"country", country.country}, {"count", country.count}});
   }
   return geo_distribution;
 }
@@ -699,8 +706,10 @@ nlohmann::json AdminController::BuildStats(size_t online_device_fallback) const 
 }
 
 ClientGeoDistribution AdminController::GetCurrentGeoDistribution() const {
-  return presence_ ? presence_->GetClientGeoDistribution()
-                   : ClientGeoDistribution{};
+  if (presence_) {
+    return presence_->GetClientGeoDistribution();
+  }
+  return db_ ? db_->GetClientGeoDistribution() : ClientGeoDistribution{};
 }
 
 AdminHttpResponse AdminController::JsonResponse(

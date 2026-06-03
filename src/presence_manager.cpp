@@ -220,6 +220,8 @@ ClientGeoDistribution PresenceManager::GetClientGeoDistribution() const {
   {
     std::lock_guard<std::mutex> lock(online_devices_mutex_);
     online_devices.assign(online_devices_.begin(), online_devices_.end());
+    online_devices.insert(online_devices.end(), online_web_clients_.begin(),
+                          online_web_clients_.end());
   }
 
   std::unordered_map<std::string, ClientNetworkInfo> network_info;
@@ -234,6 +236,7 @@ ClientGeoDistribution PresenceManager::GetClientGeoDistribution() const {
   }
 
   std::unordered_map<std::string, int64_t> province_counts;
+  std::unordered_map<std::string, int64_t> country_counts;
   for (const auto& device_id : online_devices) {
     ++distribution.total_count;
     auto it = network_info.find(device_id);
@@ -248,17 +251,22 @@ ClientGeoDistribution PresenceManager::GetClientGeoDistribution() const {
       if (province.empty()) {
         ++distribution.unknown_count;
       } else {
+        ++distribution.domestic_count;
         ++province_counts[province];
       }
     } else if (Trim(info.country).empty()) {
       ++distribution.unknown_count;
     } else {
       ++distribution.foreign_count;
+      ++country_counts[Trim(info.country)];
     }
   }
 
   for (const auto& pair : province_counts) {
     distribution.provinces.push_back({pair.first, pair.second});
+  }
+  for (const auto& pair : country_counts) {
+    distribution.countries.push_back({pair.first, pair.second});
   }
   std::sort(distribution.provinces.begin(), distribution.provinces.end(),
             [](const ProvinceUserCount& lhs, const ProvinceUserCount& rhs) {
@@ -266,6 +274,13 @@ ClientGeoDistribution PresenceManager::GetClientGeoDistribution() const {
                 return lhs.count > rhs.count;
               }
               return lhs.province < rhs.province;
+            });
+  std::sort(distribution.countries.begin(), distribution.countries.end(),
+            [](const CountryUserCount& lhs, const CountryUserCount& rhs) {
+              if (lhs.count != rhs.count) {
+                return lhs.count > rhs.count;
+              }
+              return lhs.country < rhs.country;
             });
   return distribution;
 }

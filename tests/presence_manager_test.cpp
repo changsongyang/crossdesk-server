@@ -81,14 +81,29 @@ int main() {
   expect(presence.GetDeviceNetworkInfo("device-2", &network_info) &&
              network_info.location == "Shared City, Shared Region, Sharedland",
          "presence applies shared ip geo result to all matching devices");
+  presence.OnLogin("web-2", "web-2", hdl);
+  presence.SetDeviceNetworkInfo(
+      "web-2",
+      {"198.51.100.10", "China", "Zhejiang", "Hangzhou",
+       "Hangzhou, Zhejiang, China"});
   auto distribution = presence.GetClientGeoDistribution();
-  expect(distribution.total_count == 2 && distribution.foreign_count == 2,
-         "presence geo distribution uses current online network info");
+  expect(distribution.total_count == 3 && distribution.domestic_count == 1 &&
+             distribution.foreign_count == 2,
+         "presence geo distribution includes current web client network info");
+  expect(distribution.provinces.size() == 1 &&
+             distribution.provinces[0].province == "zhejiang" &&
+             distribution.provinces[0].count == 1,
+         "presence geo distribution reports domestic province counts");
+  expect(distribution.countries.size() == 1 &&
+             distribution.countries[0].country == "Sharedland" &&
+             distribution.countries[0].count == 2,
+         "presence geo distribution reports foreign country counts");
   presence.OnLogout("device-1");
   expect(!presence.GetDeviceNetworkInfo("device-1", &network_info),
          "presence clears current network info on logout");
-  expect(presence.GetClientGeoDistribution().total_count == 1,
-         "presence geo distribution keeps other devices sharing the ip");
+  expect(presence.GetClientGeoDistribution().total_count == 2,
+         "presence geo distribution keeps other online clients");
+  presence.OnLogout("web-2");
   presence.OnLogout("device-2");
   expect(!presence.HasDeviceWithClientIp("203.0.113.8"),
          "presence drops ip tracking after last matching device logs out");
@@ -128,6 +143,23 @@ int main() {
     expect(online_devices[0].total_online_seconds >=
                online_devices[0].online_duration_seconds,
            "online device list includes total online duration");
+    db.UpdateDeviceNetworkInfo(
+        "device-1",
+        {"198.51.100.10", "China", "Zhejiang", "Hangzhou",
+         "Hangzhou, Zhejiang, China"});
+    db.UpdateDeviceNetworkInfo(
+        "web-1",
+        {"203.0.113.10", "Webland", "Web Region", "Web City",
+         "Web City, Web Region, Webland"});
+    db.UpdateDeviceNetworkInfo(
+        "C-000000",
+        {"203.0.113.11", "Cloneland", "Clone Region", "Clone City",
+         "Clone City, Clone Region, Cloneland"});
+    auto db_distribution = db.GetClientGeoDistribution();
+    expect(db_distribution.total_count == 2 &&
+               db_distribution.domestic_count == 1 &&
+               db_distribution.foreign_count == 1,
+           "database geo distribution includes web clients and excludes clones");
     db.SetDeviceOnline("device-2", true);
     db.SetDeviceOnline("device-3", true);
     expect(db.CountOnlineDevices() == 3,

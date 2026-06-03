@@ -49,6 +49,11 @@
           </div>
           <aside class="geo-side">
             <div class="geo-stat">
+              <span>国内用户</span>
+              <strong id="geo-domestic-count">0</strong>
+              <small id="geo-domestic-percent">0%</small>
+            </div>
+            <div class="geo-stat">
               <span>国外用户</span>
               <strong id="geo-foreign-count">0</strong>
               <small id="geo-foreign-percent">0%</small>
@@ -60,10 +65,13 @@
             </div>
             <div class="geo-list">
               <div class="geo-list-header">
-                <span class="geo-list-title">省份</span>
-                <button id="geo-province-order" class="geo-sort-order" type="button" aria-label="省份当前倒排，点击正排" title="按人数从多到少"></button>
+                <div class="geo-list-tabs" role="tablist" aria-label="用户地域范围">
+                  <button id="geo-domestic-tab" class="geo-list-tab active" type="button" data-geo-list="domestic" aria-selected="true">国内用户</button>
+                  <button id="geo-foreign-tab" class="geo-list-tab" type="button" data-geo-list="foreign" aria-selected="false">国外用户</button>
+                </div>
+                <button id="geo-list-order" class="geo-sort-order" type="button" aria-label="国内用户当前倒排，点击正排" title="按人数从多到少"></button>
               </div>
-              <ol id="geo-top-provinces" class="geo-top-list"></ol>
+              <ol id="geo-user-list" class="geo-top-list"></ol>
             </div>
           </aside>
         </div>

@@ -163,6 +163,10 @@ int main() {
     presence.OnLogout("device-admin-offline");
     presence.OnLogin("device-admin-control", "device-admin-control", hdl);
     presence.OnLogin("web-admin-1", "web-admin-1", hdl);
+    presence.SetDeviceNetworkInfo(
+        "web-admin-1",
+        {"198.51.100.10", "China", "Shanghai", "Shanghai",
+         "Shanghai, China"});
     db.StartRemoteControlSession("tx-admin", "device-admin-1",
                                  "device-admin-offline");
     db.EndRemoteControlSession("tx-admin", "device-admin-1",
@@ -219,10 +223,22 @@ int main() {
            "overview search scopes active count");
     expect(db_overview_body["device_counts"]["web"] == 0,
            "overview search scopes web count");
-    expect(db_overview_body["geo_distribution"]["total_count"] == 3,
-           "overview reports online device geo distribution total");
+    expect(db_overview_body["geo_distribution"]["total_count"] == 4,
+           "overview geo distribution total includes web clients");
+    expect(db_overview_body["geo_distribution"]["domestic_count"] == 2,
+           "overview reports domestic user count");
     expect(db_overview_body["geo_distribution"]["foreign_count"] == 1,
            "overview reports foreign user count");
+    expect(db_overview_body["geo_distribution"]["unknown_count"] == 1,
+           "overview keeps unknown user count");
+    bool found_testland = false;
+    for (const auto& country :
+         db_overview_body["geo_distribution"]["countries"]) {
+      if (country["country"] == "Testland" && country["count"] == 1) {
+        found_testland = true;
+      }
+    }
+    expect(found_testland, "overview reports foreign country user count");
     bool found_zhejiang = false;
     for (const auto& province :
          db_overview_body["geo_distribution"]["provinces"]) {
@@ -231,6 +247,14 @@ int main() {
       }
     }
     expect(found_zhejiang, "overview reports china province user count");
+    bool found_shanghai = false;
+    for (const auto& province :
+         db_overview_body["geo_distribution"]["provinces"]) {
+      if (province["province"] == "shanghai" && province["count"] == 1) {
+        found_shanghai = true;
+      }
+    }
+    expect(found_shanghai, "overview includes web client province count");
 
     AdminHttpResponse offline_overview = db_controller.Handle(
         {"GET",

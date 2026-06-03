@@ -12,7 +12,12 @@
         order: 'desc'
       },
       sessions: {limit: 10, offset: 0, total: 0, search: ''},
-      geo: {provinceOrder: 'desc', distribution: null}
+      geo: {
+        list: 'domestic',
+        provinceOrder: 'desc',
+        countryOrder: 'desc',
+        distribution: null
+      }
     };
     const searchTimers = {devices: null, sessions: null};
     const expandedDevices = new Set();
@@ -168,43 +173,73 @@
       return province ? provinceName(province) : key;
     }
 
-    function syncGeoProvinceOrderControl() {
-      const button = document.getElementById('geo-province-order');
+    function currentGeoListMode() {
+      return state.geo.list === 'foreign' ? 'foreign' : 'domestic';
+    }
+
+    function currentGeoListOrder() {
+      return currentGeoListMode() === 'foreign' ? state.geo.countryOrder : state.geo.provinceOrder;
+    }
+
+    function setCurrentGeoListOrder(order) {
+      if (currentGeoListMode() === 'foreign') state.geo.countryOrder = order;
+      else state.geo.provinceOrder = order;
+    }
+
+    function syncGeoListControls() {
+      const mode = currentGeoListMode();
+      document.querySelectorAll('[data-geo-list]').forEach(button => {
+        const active = button.dataset.geoList === mode;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+
+      const button = document.getElementById('geo-list-order');
       if (!button) return;
-      const isAsc = state.geo.provinceOrder === 'asc';
+      const isAsc = currentGeoListOrder() === 'asc';
+      const label = mode === 'foreign' ? '国外用户' : '国内用户';
       button.textContent = '';
       button.classList.toggle('ascending', isAsc);
       button.title = isAsc ? '按人数从少到多' : '按人数从多到少';
-      button.setAttribute('aria-label', isAsc ? '省份当前正排，点击倒排' : '省份当前倒排，点击正排');
+      button.setAttribute('aria-label', `${label}当前${isAsc ? '正排' : '倒排'}，点击${isAsc ? '倒排' : '正排'}`);
     }
 
-    function renderGeoProvinceList(data) {
-      const list = document.getElementById('geo-top-provinces');
+    function renderGeoUserList(data) {
+      const list = document.getElementById('geo-user-list') || document.getElementById('geo-top-provinces');
       if (!list) return;
-      syncGeoProvinceOrderControl();
+      syncGeoListControls();
       list.textContent = '';
-      const direction = state.geo.provinceOrder === 'asc' ? 1 : -1;
-      const provinceItems = (Array.isArray(data.provinces) ? data.provinces : [])
+      const isForeign = currentGeoListMode() === 'foreign';
+      const direction = currentGeoListOrder() === 'asc' ? 1 : -1;
+      let geoItems = (Array.isArray(isForeign ? data.countries : data.provinces)
+          ? (isForeign ? data.countries : data.provinces) : [])
         .map(item => ({
-          province: typeof item.province === 'string' ? item.province : '',
+          key: typeof (isForeign ? item.country : item.province) === 'string'
+            ? (isForeign ? item.country : item.province).trim() : '',
           count: Number(item.count) || 0
         }))
-        .filter(item => item.province && item.count > 0)
+        .filter(item => item.key && item.count > 0)
         .sort((lhs, rhs) => {
           if (lhs.count !== rhs.count) return (lhs.count - rhs.count) * direction;
-          const nameCompare = provinceDisplayName(lhs.province)
-            .localeCompare(provinceDisplayName(rhs.province), 'zh-CN');
-          return state.geo.provinceOrder === 'asc' ? nameCompare : -nameCompare;
+          const lhsName = isForeign ? lhs.key : provinceDisplayName(lhs.key);
+          const rhsName = isForeign ? rhs.key : provinceDisplayName(rhs.key);
+          const nameCompare = lhsName.localeCompare(rhsName, 'zh-CN');
+          return currentGeoListOrder() === 'asc' ? nameCompare : -nameCompare;
         });
-      if (!provinceItems.length) {
+      if (isForeign && !geoItems.length) {
+        const foreignCount = Number(data.foreign_count) || 0;
+        if (foreignCount > 0) geoItems = [{key: '国外用户', count: foreignCount}];
+      }
+      if (!geoItems.length) {
         const item = document.createElement('li');
         item.textContent = '-';
         list.appendChild(item);
         return;
       }
-      provinceItems.forEach(item => {
+      geoItems.forEach(item => {
         const li = document.createElement('li');
-        li.textContent = `${provinceDisplayName(item.province)}: ${item.count} (${formatPercent(item.count, geoTotalUsers)})`;
+        const label = isForeign ? item.key : provinceDisplayName(item.key);
+        li.textContent = `${label}: ${item.count} (${formatPercent(item.count, geoTotalUsers)})`;
         list.appendChild(li);
       });
     }
@@ -445,7 +480,14 @@
     }
 
     function renderGeoDistribution(distribution) {
-      const data = distribution || {total_count: 0, foreign_count: 0, unknown_count: 0, provinces: []};
+      const data = distribution || {
+        total_count: 0,
+        domestic_count: 0,
+        foreign_count: 0,
+        unknown_count: 0,
+        provinces: [],
+        countries: []
+      };
       state.geo.distribution = data;
       geoTotalUsers = Number(data.total_count) || 0;
       geoProvinceCounts = new Map();
@@ -456,13 +498,19 @@
 
       const foreignCount = Number(data.foreign_count) || 0;
       const unknownCount = Number(data.unknown_count) || 0;
+      const rawDomesticCount = Number(data.domestic_count);
+      const domesticCount = data.domestic_count === undefined
+        ? Math.max(0, geoTotalUsers - foreignCount - unknownCount)
+        : (Number.isFinite(rawDomesticCount) ? rawDomesticCount : 0);
       document.getElementById('geo-total').textContent = geoTotalUsers;
+      document.getElementById('geo-domestic-count').textContent = domesticCount;
+      document.getElementById('geo-domestic-percent').textContent = formatPercent(domesticCount, geoTotalUsers);
       document.getElementById('geo-foreign-count').textContent = foreignCount;
       document.getElementById('geo-foreign-percent').textContent = formatPercent(foreignCount, geoTotalUsers);
       document.getElementById('geo-unknown-count').textContent = unknownCount;
       document.getElementById('geo-unknown-percent').textContent = formatPercent(unknownCount, geoTotalUsers);
 
-      renderGeoProvinceList(data);
+      renderGeoUserList(data);
 
       if (!geoMapReady) {
         ensureChinaMap().then(ok => {
@@ -878,14 +926,33 @@
       state.devices.offset = 0;
       refreshLists();
     });
-    document.getElementById('geo-province-order').addEventListener('click', () => {
-      state.geo.provinceOrder = state.geo.provinceOrder === 'asc' ? 'desc' : 'asc';
-      renderGeoProvinceList(state.geo.distribution || {
+    document.querySelectorAll('[data-geo-list]').forEach(button => {
+      button.addEventListener('click', () => {
+        state.geo.list = button.dataset.geoList === 'foreign' ? 'foreign' : 'domestic';
+        renderGeoUserList(state.geo.distribution || {
+          total_count: 0,
+          domestic_count: 0,
+          foreign_count: 0,
+          unknown_count: 0,
+          provinces: [],
+          countries: []
+        });
+        const list = document.getElementById('geo-user-list');
+        if (list) list.scrollTop = 0;
+      });
+    });
+    document.getElementById('geo-list-order').addEventListener('click', () => {
+      setCurrentGeoListOrder(currentGeoListOrder() === 'asc' ? 'desc' : 'asc');
+      renderGeoUserList(state.geo.distribution || {
         total_count: 0,
+        domestic_count: 0,
         foreign_count: 0,
         unknown_count: 0,
-        provinces: []
+        provinces: [],
+        countries: []
       });
+      const list = document.getElementById('geo-user-list');
+      if (list) list.scrollTop = 0;
     });
     document.getElementById('session-search').addEventListener('input', (event) => {
       state.sessions.search = event.target.value.trim();

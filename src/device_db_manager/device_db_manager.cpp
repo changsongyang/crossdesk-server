@@ -1578,7 +1578,6 @@ ClientGeoDistribution DeviceDBManager::GetClientGeoDistribution() {
       "SELECT geo_country, geo_region, geo_location, COUNT(*) "
       "FROM device_presence "
       "WHERE online = 1 "
-      "AND device_id NOT LIKE 'web-%' "
       "AND device_id NOT LIKE 'C-%' "
       "GROUP BY geo_country, geo_region, geo_location;";
 
@@ -1588,6 +1587,7 @@ ClientGeoDistribution DeviceDBManager::GetClientGeoDistribution() {
   }
 
   std::unordered_map<std::string, int64_t> province_counts;
+  std::unordered_map<std::string, int64_t> country_counts;
   while (sqlite3_step(stmt) == SQLITE_ROW) {
     std::string country = ColumnText(stmt, 0);
     std::string region = ColumnText(stmt, 1);
@@ -1600,12 +1600,14 @@ ClientGeoDistribution DeviceDBManager::GetClientGeoDistribution() {
       if (province.empty()) {
         distribution.unknown_count += count;
       } else {
+        distribution.domestic_count += count;
         province_counts[province] += count;
       }
     } else if (Trim(country).empty()) {
       distribution.unknown_count += count;
     } else {
       distribution.foreign_count += count;
+      country_counts[Trim(country)] += count;
     }
   }
   sqlite3_finalize(stmt);
@@ -1613,12 +1615,22 @@ ClientGeoDistribution DeviceDBManager::GetClientGeoDistribution() {
   for (const auto& pair : province_counts) {
     distribution.provinces.push_back({pair.first, pair.second});
   }
+  for (const auto& pair : country_counts) {
+    distribution.countries.push_back({pair.first, pair.second});
+  }
   std::sort(distribution.provinces.begin(), distribution.provinces.end(),
             [](const ProvinceUserCount& lhs, const ProvinceUserCount& rhs) {
               if (lhs.count != rhs.count) {
                 return lhs.count > rhs.count;
               }
               return lhs.province < rhs.province;
+            });
+  std::sort(distribution.countries.begin(), distribution.countries.end(),
+            [](const CountryUserCount& lhs, const CountryUserCount& rhs) {
+              if (lhs.count != rhs.count) {
+                return lhs.count > rhs.count;
+              }
+              return lhs.country < rhs.country;
             });
 
   return distribution;
