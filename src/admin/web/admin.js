@@ -11,7 +11,8 @@
         sort: 'status',
         order: 'desc'
       },
-      sessions: {limit: 10, offset: 0, total: 0, search: ''}
+      sessions: {limit: 10, offset: 0, total: 0, search: ''},
+      geo: {provinceOrder: 'desc', distribution: null}
     };
     const searchTimers = {devices: null, sessions: null};
     const expandedDevices = new Set();
@@ -160,6 +161,52 @@
     function provinceTooltipText(feature) {
       const count = geoProvinceCounts.get(provinceKey(feature)) || 0;
       return `${provinceName(feature)}: ${count} (${formatPercent(count, geoTotalUsers)})`;
+    }
+
+    function provinceDisplayName(key) {
+      const province = geoFeatureByKey.get(key);
+      return province ? provinceName(province) : key;
+    }
+
+    function syncGeoProvinceOrderControl() {
+      const button = document.getElementById('geo-province-order');
+      if (!button) return;
+      const isAsc = state.geo.provinceOrder === 'asc';
+      button.textContent = '';
+      button.classList.toggle('ascending', isAsc);
+      button.title = isAsc ? '按人数从少到多' : '按人数从多到少';
+      button.setAttribute('aria-label', isAsc ? '省份当前正排，点击倒排' : '省份当前倒排，点击正排');
+    }
+
+    function renderGeoProvinceList(data) {
+      const list = document.getElementById('geo-top-provinces');
+      if (!list) return;
+      syncGeoProvinceOrderControl();
+      list.textContent = '';
+      const direction = state.geo.provinceOrder === 'asc' ? 1 : -1;
+      const provinceItems = (Array.isArray(data.provinces) ? data.provinces : [])
+        .map(item => ({
+          province: typeof item.province === 'string' ? item.province : '',
+          count: Number(item.count) || 0
+        }))
+        .filter(item => item.province && item.count > 0)
+        .sort((lhs, rhs) => {
+          if (lhs.count !== rhs.count) return (lhs.count - rhs.count) * direction;
+          const nameCompare = provinceDisplayName(lhs.province)
+            .localeCompare(provinceDisplayName(rhs.province), 'zh-CN');
+          return state.geo.provinceOrder === 'asc' ? nameCompare : -nameCompare;
+        });
+      if (!provinceItems.length) {
+        const item = document.createElement('li');
+        item.textContent = '-';
+        list.appendChild(item);
+        return;
+      }
+      provinceItems.forEach(item => {
+        const li = document.createElement('li');
+        li.textContent = `${provinceDisplayName(item.province)}: ${item.count} (${formatPercent(item.count, geoTotalUsers)})`;
+        list.appendChild(li);
+      });
     }
 
     function moveGeoTooltip(event) {
@@ -399,6 +446,7 @@
 
     function renderGeoDistribution(distribution) {
       const data = distribution || {total_count: 0, foreign_count: 0, unknown_count: 0, provinces: []};
+      state.geo.distribution = data;
       geoTotalUsers = Number(data.total_count) || 0;
       geoProvinceCounts = new Map();
       (Array.isArray(data.provinces) ? data.provinces : []).forEach(item => {
@@ -414,22 +462,7 @@
       document.getElementById('geo-unknown-count').textContent = unknownCount;
       document.getElementById('geo-unknown-percent').textContent = formatPercent(unknownCount, geoTotalUsers);
 
-      const topList = document.getElementById('geo-top-provinces');
-      topList.textContent = '';
-      const topProvinces = (Array.isArray(data.provinces) ? data.provinces : []).slice(0, 5);
-      if (!topProvinces.length) {
-        const item = document.createElement('li');
-        item.textContent = '-';
-        topList.appendChild(item);
-        return;
-      }
-      topProvinces.forEach(item => {
-        const province = geoFeatureByKey.get(item.province);
-        const count = Number(item.count) || 0;
-        const li = document.createElement('li');
-        li.textContent = `${province ? provinceName(province) : item.province}: ${count} (${formatPercent(count, geoTotalUsers)})`;
-        topList.appendChild(li);
-      });
+      renderGeoProvinceList(data);
 
       if (!geoMapReady) {
         ensureChinaMap().then(ok => {
@@ -844,6 +877,15 @@
       state.devices.order = state.devices.order === 'asc' ? 'desc' : 'asc';
       state.devices.offset = 0;
       refreshLists();
+    });
+    document.getElementById('geo-province-order').addEventListener('click', () => {
+      state.geo.provinceOrder = state.geo.provinceOrder === 'asc' ? 'desc' : 'asc';
+      renderGeoProvinceList(state.geo.distribution || {
+        total_count: 0,
+        foreign_count: 0,
+        unknown_count: 0,
+        provinces: []
+      });
     });
     document.getElementById('session-search').addEventListener('input', (event) => {
       state.sessions.search = event.target.value.trim();
