@@ -1,19 +1,27 @@
 #include "geo_location_resolver.h"
 
 #include <asio.hpp>
+#include <asio/ssl.hpp>
 #include <cstdlib>
 #include <iomanip>
+#include <memory>
 #include <nlohmann/json.hpp>
 #include <sstream>
-#include <vector>
 
 #include "log.h"
 
 namespace {
 
-constexpr char kGeoHost[] = "ip-api.com";
-constexpr char kGeoPort[] = "80";
+constexpr char kGeoHost[] = "api.ipinfo.io";
+constexpr char kGeoPort[] = "443";
+constexpr char kGeoScheme[] = "https";
+constexpr char kGeoPathTemplate[] = "/lite/{ip}?token={token}";
 constexpr int kDefaultTimeoutMs = 1200;
+
+std::string GetEnvString(const char* name, const char* fallback) {
+  const char* raw = std::getenv(name);
+  return raw && *raw ? std::string(raw) : std::string(fallback);
+}
 
 std::string ToLower(std::string value) {
   for (char& ch : value) {
@@ -27,11 +35,10 @@ std::string ToLower(std::string value) {
 bool PublicLookupEnabled() {
   const char* raw = std::getenv("CROSSDESK_GEOIP_LOOKUP");
   if (!raw) {
-    return true;
+    return false;
   }
   std::string value = ToLower(raw);
-  return value != "0" && value != "false" && value != "off" &&
-         value != "no";
+  return value == "1" || value == "true" || value == "on" || value == "yes";
 }
 
 int LookupTimeoutMs() {
@@ -61,6 +68,32 @@ std::string UrlEncode(const std::string& value) {
     }
   }
   return encoded.str();
+}
+
+void ReplaceAll(std::string* value, const std::string& marker,
+                const std::string& replacement) {
+  size_t pos = 0;
+  while ((pos = value->find(marker, pos)) != std::string::npos) {
+    value->replace(pos, marker.size(), replacement);
+    pos += replacement.size();
+  }
+}
+
+std::string LookupPath(const std::string& ip) {
+  std::string path =
+      GetEnvString("CROSSDESK_GEOIP_PATH", kGeoPathTemplate);
+  std::string encoded_ip = UrlEncode(ip);
+  std::string token = GetEnvString("CROSSDESK_GEOIP_TOKEN", "");
+  if (path.find("{token}") != std::string::npos && token.empty()) {
+    LOG_WARN("GeoIP lookup enabled but CROSSDESK_GEOIP_TOKEN is empty");
+    return "";
+  }
+  ReplaceAll(&path, "{token}", UrlEncode(token));
+  if (path.find("{ip}") == std::string::npos) {
+    return path + encoded_ip;
+  }
+  ReplaceAll(&path, "{ip}", encoded_ip);
+  return path;
 }
 
 bool IsPrivateOrLocalIp(const std::string& ip) {
@@ -96,85 +129,204 @@ std::string JsonString(const nlohmann::json& body, const char* key) {
   return it != body.end() && it->is_string() ? it->get<std::string>() : "";
 }
 
-void AppendLocationPart(std::vector<std::string>* parts,
-                        const std::string& value) {
-  if (value.empty()) {
-    return;
+std::string BuildHttpRequest(const std::string& host, const std::string& port,
+                             const std::string& path,
+                             const std::string& scheme) {
+  std::string host_header = host;
+  if ((scheme == "https" && port != "443") ||
+      (scheme != "https" && port != "80")) {
+    host_header += ":" + port;
   }
-  for (const auto& part : *parts) {
-    if (part == value) {
-      return;
-    }
-  }
-  parts->push_back(value);
+
+  std::ostringstream request;
+  request << "GET " << path << " HTTP/1.0\r\n"
+          << "Host: " << host_header << "\r\n"
+          << "Accept: application/json\r\n"
+          << "Connection: close\r\n"
+          << "User-Agent: CrossDesk-Server\r\n\r\n";
+  return request.str();
 }
 
-std::string BuildLocation(const std::string& city, const std::string& region,
-                          const std::string& country) {
-  std::vector<std::string> parts;
-  AppendLocationPart(&parts, city);
-  AppendLocationPart(&parts, region);
-  AppendLocationPart(&parts, country);
-
-  std::string result;
-  for (size_t i = 0; i < parts.size(); ++i) {
-    if (i > 0) {
-      result += ", ";
-    }
-    result += parts[i];
+std::string FetchHttpResponse(const std::string& host, const std::string& port,
+                              const std::string& request, int timeout_ms) {
+  asio::ip::tcp::iostream stream;
+  stream.expires_after(std::chrono::milliseconds(timeout_ms));
+  stream.connect(host, port);
+  if (!stream) {
+    LOG_WARN("GeoIP lookup connect failed to [{}:{}]: {}", host, port,
+             stream.error().message());
+    return "";
   }
-  return result;
+
+  stream << request;
+  stream.flush();
+
+  std::ostringstream response;
+  response << stream.rdbuf();
+  return response.str();
+}
+
+std::string FetchHttpsResponse(const std::string& host, const std::string& port,
+                               const std::string& request, int timeout_ms) {
+  asio::io_context io;
+  asio::ip::tcp::resolver resolver(io);
+  asio::ssl::context ctx(asio::ssl::context::tls_client);
+  ctx.set_verify_mode(asio::ssl::verify_none);
+  asio::ssl::stream<asio::ip::tcp::socket> stream(io, ctx);
+  SSL_set_tlsext_host_name(stream.native_handle(), host.c_str());
+
+  asio::steady_timer timer(io);
+  asio::streambuf response;
+  std::shared_ptr<std::string> request_body =
+      std::make_shared<std::string>(request);
+  asio::error_code final_ec;
+  bool done = false;
+
+  auto finish = [&](const asio::error_code& ec) {
+    if (done) {
+      return;
+    }
+    done = true;
+    final_ec = ec;
+    timer.cancel();
+    resolver.cancel();
+    asio::error_code ignored;
+    stream.lowest_layer().close(ignored);
+  };
+
+  timer.expires_after(std::chrono::milliseconds(timeout_ms));
+  timer.async_wait([&](const asio::error_code& ec) {
+    if (!ec) {
+      finish(asio::error::timed_out);
+    }
+  });
+
+  resolver.async_resolve(
+      host, port,
+      [&](const asio::error_code& ec,
+          const asio::ip::tcp::resolver::results_type& results) {
+        if (ec) {
+          finish(ec);
+          return;
+        }
+        asio::async_connect(
+            stream.lowest_layer(), results,
+            [&](const asio::error_code& ec,
+                const asio::ip::tcp::endpoint&) {
+              if (ec) {
+                finish(ec);
+                return;
+              }
+              stream.async_handshake(
+                  asio::ssl::stream_base::client,
+                  [&](const asio::error_code& ec) {
+                    if (ec) {
+                      finish(ec);
+                      return;
+                    }
+                    asio::async_write(
+                        stream, asio::buffer(*request_body),
+                        [&](const asio::error_code& ec, std::size_t) {
+                          if (ec) {
+                            finish(ec);
+                            return;
+                          }
+                          asio::async_read(
+                              stream, response, asio::transfer_all(),
+                              [&](const asio::error_code& ec, std::size_t) {
+                                if (ec != asio::error::eof &&
+                                    ec != asio::ssl::error::stream_truncated) {
+                                  finish(ec);
+                                  return;
+                                }
+                                finish({});
+                              });
+                        });
+                  });
+            });
+      });
+
+  io.run();
+  if (final_ec) {
+    LOG_WARN("GeoIP HTTPS lookup failed for [{}:{}]: {}", host, port,
+             final_ec.message());
+    return "";
+  }
+
+  std::ostringstream response_text;
+  response_text << &response;
+  return response_text.str();
+}
+
+std::string HttpBody(const std::string& response, const std::string& ip) {
+  size_t status_end = response.find('\n');
+  if (status_end == std::string::npos) {
+    LOG_WARN("GeoIP lookup returned an empty response for [{}]", ip);
+    return "";
+  }
+
+  std::string status_line = response.substr(0, status_end);
+  if (status_line.find(" 200 ") == std::string::npos) {
+    LOG_WARN("GeoIP lookup returned [{}] for [{}]", status_line, ip);
+    return "";
+  }
+
+  size_t body_pos = response.find("\r\n\r\n");
+  size_t separator_size = 4;
+  if (body_pos == std::string::npos) {
+    body_pos = response.find("\n\n");
+    separator_size = 2;
+  }
+  if (body_pos == std::string::npos) {
+    return "";
+  }
+  return response.substr(body_pos + separator_size);
+}
+
+ClientNetworkInfo ParseGeoJson(const std::string& body_text,
+                               const std::string& ip) {
+  ClientNetworkInfo info;
+  info.client_ip = ip;
+  try {
+    nlohmann::json body = nlohmann::json::parse(body_text);
+    info.country = JsonString(body, "country");
+    if (info.country.empty()) {
+      info.country = JsonString(body, "country_code");
+    }
+    info.location = info.country;
+  } catch (const std::exception& e) {
+    LOG_WARN("GeoIP lookup parse failed for [{}]: {}", ip, e.what());
+  }
+  return info;
 }
 
 ClientNetworkInfo ResolvePublicIp(const std::string& ip) {
   ClientNetworkInfo info;
   info.client_ip = ip;
 
-  asio::ip::tcp::iostream stream;
-  stream.expires_after(std::chrono::milliseconds(LookupTimeoutMs()));
-  stream.connect(kGeoHost, kGeoPort);
-  if (!stream) {
-    LOG_WARN("GeoIP lookup connect failed for [{}]: {}", ip,
-             stream.error().message());
+  std::string host = GetEnvString("CROSSDESK_GEOIP_HOST", kGeoHost);
+  std::string port = GetEnvString("CROSSDESK_GEOIP_PORT", kGeoPort);
+  std::string scheme = ToLower(GetEnvString("CROSSDESK_GEOIP_SCHEME", kGeoScheme));
+  if (host.empty() || port.empty()) {
     return info;
   }
 
-  std::string path = "/json/" + UrlEncode(ip) +
-                     "?fields=status,country,regionName,city";
-  stream << "GET " << path << " HTTP/1.0\r\n"
-         << "Host: " << kGeoHost << "\r\n"
-         << "Accept: application/json\r\n"
-         << "Connection: close\r\n"
-         << "User-Agent: CrossDesk-Server\r\n\r\n";
-  stream.flush();
-
-  std::string status_line;
-  std::getline(stream, status_line);
-  if (status_line.find(" 200 ") == std::string::npos) {
-    LOG_WARN("GeoIP lookup returned [{}] for [{}]", status_line, ip);
+  std::string path = LookupPath(ip);
+  if (path.empty()) {
     return info;
   }
 
-  std::string header;
-  while (std::getline(stream, header) && header != "\r") {
+  int timeout_ms = LookupTimeoutMs();
+  std::string request = BuildHttpRequest(host, port, path, scheme);
+  std::string response =
+      scheme == "https" ? FetchHttpsResponse(host, port, request, timeout_ms)
+                        : FetchHttpResponse(host, port, request, timeout_ms);
+  if (response.empty()) {
+    return info;
   }
 
-  std::ostringstream body_stream;
-  body_stream << stream.rdbuf();
-  try {
-    nlohmann::json body = nlohmann::json::parse(body_stream.str());
-    if (JsonString(body, "status") != "success") {
-      return info;
-    }
-    info.country = JsonString(body, "country");
-    info.region = JsonString(body, "regionName");
-    info.city = JsonString(body, "city");
-    info.location = BuildLocation(info.city, info.region, info.country);
-  } catch (const std::exception& e) {
-    LOG_WARN("GeoIP lookup parse failed for [{}]: {}", ip, e.what());
-  }
-
-  return info;
+  std::string body = HttpBody(response, ip);
+  return body.empty() ? info : ParseGeoJson(body, ip);
 }
 
 }  // namespace
