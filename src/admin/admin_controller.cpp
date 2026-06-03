@@ -156,6 +156,23 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
     .metric { background: #ffffff; border: 1px solid #d9dee5; border-radius: 8px; min-width: 0; padding: 16px; }
     .metric span { color: #667085; font-size: 13px; }
     .metric strong { display: block; font-size: 30px; margin-top: 6px; }
+    .geo-panel { margin-bottom: 18px; }
+    .geo-total { color: #667085; font-size: 13px; }
+    .geo-total strong { color: #17202a; font-size: 18px; margin-left: 4px; }
+    .geo-layout { display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 18px; align-items: stretch; }
+    .china-map-wrap { min-height: 360px; position: relative; }
+    .china-map { display: block; height: 100%; min-height: 360px; width: 100%; }
+    .china-map .province { cursor: pointer; stroke: #ffffff; stroke-linejoin: round; stroke-width: 2; transition: fill .16s ease, stroke .16s ease, transform .16s ease; }
+    .china-map .province:hover { stroke: #1264a3; stroke-width: 3; }
+    .china-map text { fill: #344054; font-size: 12px; font-weight: 600; pointer-events: none; text-anchor: middle; }
+    .geo-tooltip { background: #17202a; border-radius: 6px; color: #ffffff; display: none; font-size: 13px; left: 0; max-width: 220px; padding: 8px 10px; pointer-events: none; position: absolute; top: 0; transform: translate(10px, 10px); z-index: 3; }
+    .geo-tooltip.visible { display: block; }
+    .geo-side { display: grid; align-content: start; gap: 14px; min-width: 0; }
+    .geo-stat span, .geo-list-title { color: #667085; display: block; font-size: 12px; }
+    .geo-stat strong { display: block; font-size: 28px; margin-top: 3px; }
+    .geo-stat small { color: #667085; display: block; font-size: 12px; margin-top: 2px; }
+    .geo-top-list { color: #344054; font-size: 13px; margin: 6px 0 0; padding-left: 20px; }
+    .geo-top-list li { margin: 4px 0; }
     .grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); gap: 18px; align-items: start; }
     .toolbar { display: flex; gap: 10px; justify-content: space-between; align-items: center; margin-bottom: 12px; min-width: 0; }
     .toolbar h2 { font-size: 18px; margin: 0; }
@@ -204,7 +221,7 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
     @media (max-width: 860px) {
       header { padding: 12px 16px; }
       main { padding: 16px; }
-      .metrics, .grid { grid-template-columns: 1fr; }
+      .metrics, .geo-layout, .grid { grid-template-columns: 1fr; }
       .toolbar { align-items: stretch; flex-direction: column; gap: 8px; }
       .actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); justify-content: stretch; width: 100%; }
       .actions input, .actions select, .actions button { min-width: 0; width: 100%; }
@@ -223,6 +240,7 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
       .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }
       .metric { padding: 12px; }
       .metric strong { font-size: 24px; margin-top: 4px; }
+      .china-map-wrap, .china-map { min-height: 300px; }
       .grid { gap: 12px; }
       .segments { margin: 0 -2px 12px; padding-bottom: 6px; }
       .segments button { min-height: 40px; padding: 8px 10px; }
@@ -285,6 +303,34 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
         <div class="metric"><span>Control time</span><strong id="metric-control">0s</strong></div>
         <div class="metric"><span>Controlled time</span><strong id="metric-controlled">0s</strong></div>
       </div>
+      <section class="panel geo-panel">
+        <div class="toolbar">
+          <h2>中国用户分布</h2>
+          <div class="geo-total">总用户 <strong id="geo-total">0</strong></div>
+        </div>
+        <div class="geo-layout">
+          <div class="china-map-wrap">
+            <svg id="china-map" class="china-map" viewBox="0 0 620 620" role="img" aria-label="China user distribution map"></svg>
+            <div id="geo-tooltip" class="geo-tooltip"></div>
+          </div>
+          <aside class="geo-side">
+            <div class="geo-stat">
+              <span>国外用户</span>
+              <strong id="geo-foreign-count">0</strong>
+              <small id="geo-foreign-percent">0%</small>
+            </div>
+            <div class="geo-stat">
+              <span>未解析</span>
+              <strong id="geo-unknown-count">0</strong>
+              <small id="geo-unknown-percent">0%</small>
+            </div>
+            <div class="geo-list">
+              <span class="geo-list-title">省份排行</span>
+              <ol id="geo-top-provinces" class="geo-top-list"></ol>
+            </div>
+          </aside>
+        </div>
+      </section>
       <div class="grid">
         <section class="panel">
           <div class="toolbar">
@@ -387,6 +433,47 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
       activeConnections: 0,
       capturedAt: 0
     };
+    const MAP_NS = 'http://www.w3.org/2000/svg';
+    const GEO_COLORS = ['#edf2f7', '#d6e9f8', '#a9d3ee', '#6fb2d8', '#3288bd', '#1264a3'];
+    const CHINA_PROVINCES = [
+      {key: 'xinjiang', label: '新疆', d: 'M38 92 L170 70 L210 130 L185 205 L95 215 L45 172 Z', lx: 118, ly: 145},
+      {key: 'tibet', label: '西藏', d: 'M58 236 L205 215 L260 275 L230 345 L120 352 L45 310 Z', lx: 148, ly: 292},
+      {key: 'qinghai', label: '青海', d: 'M200 195 L300 190 L315 255 L260 275 L205 215 Z', lx: 260, ly: 230},
+      {key: 'gansu', label: '甘肃', d: 'M300 145 L365 165 L350 220 L315 255 L300 190 L215 180 L210 130 Z', lx: 304, ly: 184},
+      {key: 'inner_mongolia', label: '内蒙古', d: 'M170 70 L310 55 L455 75 L535 115 L510 155 L390 135 L300 145 L210 130 Z', lx: 350, ly: 105},
+      {key: 'heilongjiang', label: '黑龙江', d: 'M490 35 L580 55 L590 120 L535 115 L455 75 Z', lx: 535, ly: 78},
+      {key: 'jilin', label: '吉林', d: 'M510 120 L580 125 L575 170 L515 165 Z', lx: 545, ly: 147},
+      {key: 'liaoning', label: '辽宁', d: 'M475 155 L545 170 L520 215 L465 190 Z', lx: 505, ly: 185},
+      {key: 'beijing', label: '北京', d: 'M424 178 L442 178 L445 196 L428 202 L418 190 Z', lx: 432, ly: 190},
+      {key: 'tianjin', label: '天津', d: 'M443 195 L460 200 L457 218 L438 216 Z', lx: 449, ly: 211},
+      {key: 'hebei', label: '河北', d: 'M405 165 L465 190 L455 245 L395 235 L380 190 Z', lx: 418, ly: 220},
+      {key: 'shanxi', label: '山西', d: 'M355 175 L395 175 L395 235 L355 240 L340 205 Z', lx: 370, ly: 212},
+      {key: 'ningxia', label: '宁夏', d: 'M315 190 L350 205 L340 240 L305 230 Z', lx: 326, ly: 218},
+      {key: 'shaanxi', label: '陕西', d: 'M320 230 L365 245 L350 310 L305 310 L290 265 Z', lx: 325, ly: 275},
+      {key: 'shandong', label: '山东', d: 'M455 235 L535 245 L525 290 L455 285 Z', lx: 494, ly: 266},
+      {key: 'henan', label: '河南', d: 'M365 245 L455 245 L455 300 L390 310 L350 280 Z', lx: 402, ly: 280},
+      {key: 'jiangsu', label: '江苏', d: 'M495 295 L555 300 L555 360 L500 350 L475 315 Z', lx: 520, ly: 326},
+      {key: 'anhui', label: '安徽', d: 'M440 305 L495 295 L500 350 L455 375 L425 345 Z', lx: 463, ly: 338},
+      {key: 'shanghai', label: '上海', d: 'M555 348 L574 352 L570 372 L552 370 Z', lx: 562, ly: 365},
+      {key: 'hubei', label: '湖北', d: 'M360 315 L425 310 L430 365 L370 380 L335 350 Z', lx: 382, ly: 347},
+      {key: 'hunan', label: '湖南', d: 'M370 380 L430 365 L440 425 L385 445 L340 405 Z', lx: 390, ly: 410},
+      {key: 'jiangxi', label: '江西', d: 'M440 375 L490 410 L470 460 L420 445 L400 405 Z', lx: 444, ly: 420},
+      {key: 'zhejiang', label: '浙江', d: 'M500 360 L555 360 L545 420 L490 410 L470 375 Z', lx: 514, ly: 392},
+      {key: 'fujian', label: '福建', d: 'M470 460 L520 430 L540 485 L500 520 L455 495 Z', lx: 499, ly: 478},
+      {key: 'taiwan', label: '台湾', d: 'M565 455 C586 478 586 520 565 542 C545 520 545 478 565 455 Z', lx: 566, ly: 503},
+      {key: 'sichuan', label: '四川', d: 'M250 305 L335 310 L340 405 L285 435 L220 390 L230 345 Z', lx: 282, ly: 365},
+      {key: 'chongqing', label: '重庆', d: 'M335 350 L370 380 L340 405 L315 375 Z', lx: 342, ly: 380},
+      {key: 'guizhou', label: '贵州', d: 'M285 435 L340 405 L365 455 L290 445 L260 470 Z', lx: 310, ly: 440},
+      {key: 'yunnan', label: '云南', d: 'M205 425 L285 435 L260 510 L190 520 L150 465 Z', lx: 222, ly: 475},
+      {key: 'guangxi', label: '广西', d: 'M290 445 L365 455 L335 500 L270 510 L240 470 Z', lx: 304, ly: 478},
+      {key: 'guangdong', label: '广东', d: 'M365 455 L455 495 L500 520 L470 560 L380 545 L335 500 Z', lx: 417, ly: 513},
+      {key: 'hainan', label: '海南', d: 'M385 578 C398 565 423 567 435 582 C422 600 398 601 385 578 Z', lx: 410, ly: 586},
+      {key: 'hongkong', label: '香港', d: 'M470 548 C482 538 496 545 494 558 C482 568 471 561 470 548 Z', lx: 484, ly: 556},
+      {key: 'macau', label: '澳门', d: 'M450 546 C459 538 468 543 467 554 C458 562 449 556 450 546 Z', lx: 458, ly: 552}
+    ];
+    let geoMapReady = false;
+    let geoProvinceCounts = new Map();
+    let geoTotalUsers = 0;
 
     function showDashboard() {
       loginView.classList.add('hidden');
@@ -478,6 +565,124 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
 
     function appendBadge(parent, value, className) {
       return appendText(parent, 'span', value, `badge ${className}`);
+    }
+
+    function formatPercent(count, total) {
+      if (!total) return '0%';
+      return `${((Number(count) || 0) * 100 / total).toFixed(1)}%`;
+    }
+
+    function geoColor(count, maxCount) {
+      const value = Number(count) || 0;
+      if (value <= 0 || maxCount <= 0) return GEO_COLORS[0];
+      const index = Math.max(1, Math.ceil((value / maxCount) * (GEO_COLORS.length - 1)));
+      return GEO_COLORS[Math.min(index, GEO_COLORS.length - 1)];
+    }
+
+    function provinceTooltipText(province) {
+      const count = geoProvinceCounts.get(province.key) || 0;
+      return `${province.label}: ${count} (${formatPercent(count, geoTotalUsers)})`;
+    }
+
+    function moveGeoTooltip(event) {
+      const wrap = document.querySelector('.china-map-wrap');
+      const tooltip = document.getElementById('geo-tooltip');
+      if (!wrap || !tooltip) return;
+      const rect = wrap.getBoundingClientRect();
+      if (typeof event.clientX !== 'number' || typeof event.clientY !== 'number') {
+        tooltip.style.left = '10px';
+        tooltip.style.top = '10px';
+        return;
+      }
+      const left = Math.max(0, Math.min(event.clientX - rect.left, rect.width - 220));
+      const top = Math.max(0, Math.min(event.clientY - rect.top, rect.height - 54));
+      tooltip.style.left = `${left}px`;
+      tooltip.style.top = `${top}px`;
+    }
+
+    function showGeoTooltip(event, province) {
+      const tooltip = document.getElementById('geo-tooltip');
+      tooltip.textContent = provinceTooltipText(province);
+      tooltip.classList.add('visible');
+      moveGeoTooltip(event);
+    }
+
+    function hideGeoTooltip() {
+      document.getElementById('geo-tooltip').classList.remove('visible');
+    }
+
+    function ensureChinaMap() {
+      if (geoMapReady) return;
+      const svg = document.getElementById('china-map');
+      CHINA_PROVINCES.forEach(province => {
+        const path = document.createElementNS(MAP_NS, 'path');
+        path.id = `geo-province-${province.key}`;
+        path.classList.add('province');
+        path.setAttribute('d', province.d);
+        path.setAttribute('fill', GEO_COLORS[0]);
+        path.setAttribute('tabindex', '0');
+        path.setAttribute('role', 'img');
+        path.setAttribute('aria-label', provinceTooltipText(province));
+        path.addEventListener('mouseenter', event => showGeoTooltip(event, province));
+        path.addEventListener('mousemove', moveGeoTooltip);
+        path.addEventListener('mouseleave', hideGeoTooltip);
+        path.addEventListener('focus', event => showGeoTooltip(event, province));
+        path.addEventListener('blur', hideGeoTooltip);
+        svg.appendChild(path);
+
+        const label = document.createElementNS(MAP_NS, 'text');
+        label.setAttribute('x', province.lx);
+        label.setAttribute('y', province.ly);
+        label.textContent = province.label;
+        svg.appendChild(label);
+      });
+      geoMapReady = true;
+    }
+
+    function renderGeoDistribution(distribution) {
+      ensureChinaMap();
+      const data = distribution || {total_count: 0, foreign_count: 0, unknown_count: 0, provinces: []};
+      geoTotalUsers = Number(data.total_count) || 0;
+      geoProvinceCounts = new Map();
+      let maxProvinceCount = 0;
+      (Array.isArray(data.provinces) ? data.provinces : []).forEach(item => {
+        const count = Number(item.count) || 0;
+        geoProvinceCounts.set(item.province, count);
+        if (count > maxProvinceCount) maxProvinceCount = count;
+      });
+
+      CHINA_PROVINCES.forEach(province => {
+        const count = geoProvinceCounts.get(province.key) || 0;
+        const path = document.getElementById(`geo-province-${province.key}`);
+        if (!path) return;
+        path.setAttribute('fill', geoColor(count, maxProvinceCount));
+        path.setAttribute('aria-label', provinceTooltipText(province));
+      });
+
+      const foreignCount = Number(data.foreign_count) || 0;
+      const unknownCount = Number(data.unknown_count) || 0;
+      document.getElementById('geo-total').textContent = geoTotalUsers;
+      document.getElementById('geo-foreign-count').textContent = foreignCount;
+      document.getElementById('geo-foreign-percent').textContent = formatPercent(foreignCount, geoTotalUsers);
+      document.getElementById('geo-unknown-count').textContent = unknownCount;
+      document.getElementById('geo-unknown-percent').textContent = formatPercent(unknownCount, geoTotalUsers);
+
+      const topList = document.getElementById('geo-top-provinces');
+      topList.textContent = '';
+      const topProvinces = (Array.isArray(data.provinces) ? data.provinces : []).slice(0, 5);
+      if (!topProvinces.length) {
+        const item = document.createElement('li');
+        item.textContent = '-';
+        topList.appendChild(item);
+        return;
+      }
+      topProvinces.forEach(item => {
+        const province = CHINA_PROVINCES.find(candidate => candidate.key === item.province);
+        const count = Number(item.count) || 0;
+        const li = document.createElement('li');
+        li.textContent = `${province ? province.label : item.province}: ${count} (${formatPercent(count, geoTotalUsers)})`;
+        topList.appendChild(li);
+      });
     }
 
     function setDurationDataset(cell, kind, device, base, capturedAt, running, rate) {
@@ -835,6 +1040,7 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
         return refreshLists();
       }
       applyDeviceCounts(data.device_counts);
+      renderGeoDistribution(data.geo_distribution);
       renderDevices(data.devices || []);
       renderSessions(data.sessions || []);
       updatePager('devices');
@@ -923,6 +1129,7 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
     });
     document.getElementById('list-refresh').addEventListener('click', refreshLists);
     applyDeviceCounts();
+    renderGeoDistribution();
     refreshStats().then((ok) => {
       if (ok) showDashboard();
       else showLogin('');
@@ -1187,6 +1394,21 @@ AdminHttpResponse AdminController::HandleOverview(
     }
   }
 
+  nlohmann::json geo_distribution = {{"total_count", 0},
+                                     {"foreign_count", 0},
+                                     {"unknown_count", 0},
+                                     {"provinces", nlohmann::json::array()}};
+  if (db_) {
+    ClientGeoDistribution distribution = db_->GetClientGeoDistribution();
+    geo_distribution["total_count"] = distribution.total_count;
+    geo_distribution["foreign_count"] = distribution.foreign_count;
+    geo_distribution["unknown_count"] = distribution.unknown_count;
+    for (const auto& province : distribution.provinces) {
+      geo_distribution["provinces"].push_back(
+          {{"province", province.province}, {"count", province.count}});
+    }
+  }
+
   nlohmann::json stats = BuildStats(online_device_fallback);
 
   nlohmann::json devices_page = {{"limit", device_limit},
@@ -1205,6 +1427,7 @@ AdminHttpResponse AdminController::HandleOverview(
                             {"devices", devices},
                             {"devices_page", devices_page},
                             {"device_counts", device_counts},
+                            {"geo_distribution", geo_distribution},
                             {"sessions", sessions},
                             {"sessions_page", sessions_page}});
 }

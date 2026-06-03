@@ -47,6 +47,81 @@ std::string ToLower(std::string value) {
   return value;
 }
 
+std::string Trim(std::string value) {
+  auto is_space = [](unsigned char ch) { return std::isspace(ch); };
+  value.erase(value.begin(),
+              std::find_if(value.begin(), value.end(),
+                           [&](unsigned char ch) { return !is_space(ch); }));
+  value.erase(std::find_if(value.rbegin(), value.rend(),
+                           [&](unsigned char ch) { return !is_space(ch); })
+                  .base(),
+              value.end());
+  return value;
+}
+
+bool ContainsText(const std::string& value, const std::string& pattern) {
+  return value.find(pattern) != std::string::npos;
+}
+
+bool IsChinaCountry(const std::string& country) {
+  std::string normalized = ToLower(Trim(country));
+  return normalized == "china" || normalized == "cn" ||
+         ContainsText(country, "中国");
+}
+
+std::string NormalizeChinaProvince(const std::string& region,
+                                   const std::string& location) {
+  std::string value = ToLower(region + " " + location);
+  const std::vector<std::pair<std::string, std::vector<std::string>>> matchers =
+      {
+          {"anhui", {"anhui", "安徽"}},
+          {"beijing", {"beijing", "北京"}},
+          {"chongqing", {"chongqing", "重庆"}},
+          {"fujian", {"fujian", "福建"}},
+          {"gansu", {"gansu", "甘肃"}},
+          {"guangdong", {"guangdong", "广东"}},
+          {"guangxi", {"guangxi", "广西"}},
+          {"guizhou", {"guizhou", "贵州"}},
+          {"hainan", {"hainan", "海南"}},
+          {"hebei", {"hebei", "河北"}},
+          {"heilongjiang", {"heilongjiang", "黑龙江"}},
+          {"henan", {"henan", "河南"}},
+          {"hongkong", {"hong kong", "hongkong", "香港"}},
+          {"hubei", {"hubei", "湖北"}},
+          {"hunan", {"hunan", "湖南"}},
+          {"inner_mongolia",
+           {"inner mongolia", "neimenggu", "内蒙古"}},
+          {"jiangsu", {"jiangsu", "江苏"}},
+          {"jiangxi", {"jiangxi", "江西"}},
+          {"jilin", {"jilin", "吉林"}},
+          {"liaoning", {"liaoning", "辽宁"}},
+          {"macau", {"macau", "macao", "澳门"}},
+          {"ningxia", {"ningxia", "宁夏"}},
+          {"qinghai", {"qinghai", "青海"}},
+          {"shaanxi", {"shaanxi", "shanxi sheng", "陕西"}},
+          {"shandong", {"shandong", "山东"}},
+          {"shanghai", {"shanghai", "上海"}},
+          {"shanxi", {"shanxi", "山西"}},
+          {"sichuan", {"sichuan", "四川"}},
+          {"taiwan", {"taiwan", "台湾"}},
+          {"tianjin", {"tianjin", "天津"}},
+          {"tibet", {"tibet", "xizang", "西藏"}},
+          {"xinjiang", {"xinjiang", "新疆"}},
+          {"yunnan", {"yunnan", "云南"}},
+          {"zhejiang", {"zhejiang", "浙江"}},
+      };
+
+  for (const auto& matcher : matchers) {
+    for (const auto& pattern : matcher.second) {
+      if (ContainsText(value, pattern) ||
+          ContainsText(region + " " + location, pattern)) {
+        return matcher.first;
+      }
+    }
+  }
+  return "";
+}
+
 std::string NormalizeRemoteDeviceId(const std::string& device_id) {
   return device_id.rfind("C-", 0) == 0 ? device_id.substr(2) : device_id;
 }
@@ -1402,6 +1477,62 @@ OnlineDurationStats DeviceDBManager::GetOnlineDurationStats() {
   }
   sqlite3_finalize(stmt);
   return stats;
+}
+
+ClientGeoDistribution DeviceDBManager::GetClientGeoDistribution() {
+  std::lock_guard<std::recursive_mutex> lock(db_mutex_);
+  ClientGeoDistribution distribution;
+  if (db_ == nullptr) {
+    LOG_ERROR("Database is not initialized in GetClientGeoDistribution.");
+    return distribution;
+  }
+
+  const char* sql =
+      "SELECT geo_country, geo_region, geo_location, COUNT(*) "
+      "FROM device_presence "
+      "WHERE device_id NOT LIKE 'C-%' "
+      "GROUP BY geo_country, geo_region, geo_location;";
+
+  sqlite3_stmt* stmt = nullptr;
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    return distribution;
+  }
+
+  std::unordered_map<std::string, int64_t> province_counts;
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    std::string country = ColumnText(stmt, 0);
+    std::string region = ColumnText(stmt, 1);
+    std::string location = ColumnText(stmt, 2);
+    int64_t count = sqlite3_column_int64(stmt, 3);
+    distribution.total_count += count;
+
+    std::string province = NormalizeChinaProvince(region, location);
+    if (IsChinaCountry(country) || !province.empty()) {
+      if (province.empty()) {
+        distribution.unknown_count += count;
+      } else {
+        province_counts[province] += count;
+      }
+    } else if (Trim(country).empty()) {
+      distribution.unknown_count += count;
+    } else {
+      distribution.foreign_count += count;
+    }
+  }
+  sqlite3_finalize(stmt);
+
+  for (const auto& pair : province_counts) {
+    distribution.provinces.push_back({pair.first, pair.second});
+  }
+  std::sort(distribution.provinces.begin(), distribution.provinces.end(),
+            [](const ProvinceUserCount& lhs, const ProvinceUserCount& rhs) {
+              if (lhs.count != rhs.count) {
+                return lhs.count > rhs.count;
+              }
+              return lhs.province < rhs.province;
+            });
+
+  return distribution;
 }
 
 std::vector<OnlineDeviceInfo> DeviceDBManager::ListOnlineDevices() {

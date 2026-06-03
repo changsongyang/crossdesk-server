@@ -123,6 +123,11 @@ int main() {
         "device-admin-1",
         {"203.0.113.8", "Testland", "Test Region", "Test City",
          "Test City, Test Region, Testland"});
+    db.SetDeviceOnline("device-admin-zhejiang", true);
+    db.UpdateDeviceNetworkInfo(
+        "device-admin-zhejiang",
+        {"198.51.100.8", "China", "Zhejiang", "Hangzhou",
+         "Hangzhou, Zhejiang, China"});
     db.SetDeviceOnline("device-admin-offline", true);
     db.SetDeviceOnline("device-admin-offline", false);
     db.SetDeviceOnline("device-admin-control", true);
@@ -183,6 +188,18 @@ int main() {
            "overview search scopes active count");
     expect(db_overview_body["device_counts"]["web"] == 0,
            "overview search scopes web count");
+    expect(db_overview_body["geo_distribution"]["total_count"] == 5,
+           "overview reports geo distribution total");
+    expect(db_overview_body["geo_distribution"]["foreign_count"] == 1,
+           "overview reports foreign user count");
+    bool found_zhejiang = false;
+    for (const auto& province :
+         db_overview_body["geo_distribution"]["provinces"]) {
+      if (province["province"] == "zhejiang" && province["count"] == 1) {
+        found_zhejiang = true;
+      }
+    }
+    expect(found_zhejiang, "overview reports china province user count");
 
     AdminHttpResponse offline_overview = db_controller.Handle(
         {"GET",

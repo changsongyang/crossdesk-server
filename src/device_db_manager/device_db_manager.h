@@ -52,6 +52,18 @@ struct ClientNetworkInfo {
   std::string location;
 };
 
+struct ProvinceUserCount {
+  std::string province;
+  int64_t count = 0;
+};
+
+struct ClientGeoDistribution {
+  int64_t total_count = 0;
+  int64_t foreign_count = 0;
+  int64_t unknown_count = 0;
+  std::vector<ProvinceUserCount> provinces;
+};
+
 struct OnlineDurationStats {
   int64_t current_online_seconds = 0;
   int64_t total_online_seconds = 0;
@@ -103,6 +115,7 @@ class DeviceDBManager {
   int CountDevicePresence(const std::string& search = "",
                           const std::string& filter = "all");
   OnlineDurationStats GetOnlineDurationStats();
+  ClientGeoDistribution GetClientGeoDistribution();
   std::vector<OnlineDeviceInfo> ListOnlineDevices();
   std::vector<OnlineDeviceInfo> ListOnlineDevices(
       size_t limit, size_t offset, const std::string& search);
