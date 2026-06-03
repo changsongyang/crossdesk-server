@@ -62,6 +62,7 @@ class TransmissionManager {
 
   bool ReleaseGuestFromTransmission(const std::string& guest_id);
   bool DisconnectTransmission(const std::string& transmission_id);
+  size_t PruneDisconnectedTransmissions();
   std::string ReleaseUserSession(websocketpp::connection_hdl hdl);
   std::string ReleaseUserFromWsHandle(websocketpp::connection_hdl hdl);
   void RemoveWsHandleLastActiveTime(websocketpp::connection_hdl hdl);

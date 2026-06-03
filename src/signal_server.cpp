@@ -13,6 +13,7 @@
 namespace {
 
 constexpr long kRuntimeHeartbeatIntervalMs = 5000;
+constexpr long kRecoveredSessionCleanupDelayMs = 120000;
 
 void SetJsonResponse(server::connection_ptr con,
                      websocketpp::http::status_code::value status,
@@ -362,6 +363,26 @@ void SignalServer::ScheduleRuntimeHeartbeat() {
       });
 }
 
+void SignalServer::ScheduleRecoveredSessionCleanup() {
+  server_.set_timer(
+      kRecoveredSessionCleanupDelayMs,
+      [this](websocketpp::lib::error_code const& ec) {
+        if (ec) {
+          return;
+        }
+        if (!transmission_manager_) {
+          return;
+        }
+        size_t pruned =
+            transmission_manager_->PruneDisconnectedTransmissions();
+        if (pruned > 0) {
+          LOG_INFO("Pruned {} disconnected restored remote control "
+                   "connection(s)",
+                   pruned);
+        }
+      });
+}
+
 void SignalServer::Run() {
   if (!std::filesystem::exists(certs_dir_)) {
     std::string message = "Certs dir [" + certs_dir_ + "] does not exist";
@@ -415,6 +436,7 @@ void SignalServer::Run() {
     device_db_manager_->RecordRuntimeHeartbeat();
   }
   ScheduleRuntimeHeartbeat();
+  ScheduleRecoveredSessionCleanup();
 
   try {
     server_.run();

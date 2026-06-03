@@ -49,6 +49,7 @@ class SignalServer {
 
  private:
   void ScheduleRuntimeHeartbeat();
+  void ScheduleRecoveredSessionCleanup();
 
   server server_;
   uint16_t port_ = 9090;

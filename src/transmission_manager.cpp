@@ -298,6 +298,53 @@ bool TransmissionManager::DisconnectTransmission(
   return ReleaseTransmission(transmission_id);
 }
 
+size_t TransmissionManager::PruneDisconnectedTransmissions() {
+  std::lock_guard<std::recursive_mutex> lock(ws_hdl_alive_checker_mutex_);
+
+  std::vector<std::string> disconnected_transmissions;
+  for (const auto& host_pair : transmission_host_id_list_) {
+    if (!HasUserConnection(ws_hdl_user_id_list_, host_pair.second)) {
+      disconnected_transmissions.push_back(host_pair.first);
+    }
+  }
+
+  size_t pruned_connections = 0;
+  for (const auto& transmission_id : disconnected_transmissions) {
+    auto guest_it = transmission_guest_id_list_.find(transmission_id);
+    if (guest_it != transmission_guest_id_list_.end()) {
+      pruned_connections += guest_it->second.size();
+    }
+    ReleaseTransmission(transmission_id);
+  }
+
+  for (auto map_it = transmission_guest_id_list_.begin();
+       map_it != transmission_guest_id_list_.end();) {
+    auto host_it = transmission_host_id_list_.find(map_it->first);
+    std::string host_id =
+        host_it != transmission_host_id_list_.end() ? host_it->second : "";
+    auto& guests = map_it->second;
+    for (auto guest_it = guests.begin(); guest_it != guests.end();) {
+      if (HasUserConnection(ws_hdl_user_id_list_, *guest_it)) {
+        ++guest_it;
+        continue;
+      }
+      if (remote_control_session_callback_) {
+        remote_control_session_callback_(map_it->first, host_id, *guest_it,
+                                         false);
+      }
+      guest_it = guests.erase(guest_it);
+      ++pruned_connections;
+    }
+    if (guests.empty()) {
+      map_it = transmission_guest_id_list_.erase(map_it);
+    } else {
+      ++map_it;
+    }
+  }
+
+  return pruned_connections;
+}
+
 std::string TransmissionManager::ReleaseUserSession(
     websocketpp::connection_hdl hdl) {
   std::lock_guard<std::recursive_mutex> lock(ws_hdl_alive_checker_mutex_);

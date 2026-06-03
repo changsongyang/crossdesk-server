@@ -128,6 +128,40 @@ int main() {
   }
 
   {
+    TransmissionManager prune_transmission;
+    int ends = 0;
+    prune_transmission.SetRemoteControlSessionCallback(
+        [&](const std::string&, const std::string&, const std::string&,
+            bool started) {
+          if (!started) {
+            ++ends;
+          }
+        });
+
+    auto live_host_connection = std::make_shared<int>(1);
+    auto live_guest_connection = std::make_shared<int>(2);
+    websocketpp::connection_hdl live_host_hdl(live_host_connection);
+    websocketpp::connection_hdl live_guest_hdl(live_guest_connection);
+
+    prune_transmission.BindHostToTransmission("offline-host", "tx-offline");
+    prune_transmission.BindGuestToTransmission("offline-guest", "tx-offline");
+    prune_transmission.BindHostToTransmission("live-host", "tx-live");
+    prune_transmission.BindGuestToTransmission("live-guest", "tx-live");
+    prune_transmission.BindUserToWsHandle("live-host", live_host_hdl);
+    prune_transmission.BindUserToWsHandle("live-guest", live_guest_hdl);
+
+    expect(prune_transmission.PruneDisconnectedTransmissions() == 1,
+           "prune removes disconnected restored guest connection");
+    expect(ends == 1, "prune emits remote control end callback");
+    expect(!prune_transmission.IsTransmissionExist("tx-offline"),
+           "prune removes disconnected host transmission");
+    expect(prune_transmission.IsTransmissionExist("tx-live"),
+           "prune keeps transmission with connected participants");
+    expect(prune_transmission.GetActiveConnectionCount() == 1,
+           "prune leaves live active connection count intact");
+  }
+
+  {
     TransmissionManager duplicate_transmission;
     auto first_connection = std::make_shared<int>(1);
     auto second_connection = std::make_shared<int>(2);
