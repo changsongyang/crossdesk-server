@@ -207,8 +207,8 @@ int main() {
            "overview search scopes active count");
     expect(db_overview_body["device_counts"]["web"] == 0,
            "overview search scopes web count");
-    expect(db_overview_body["geo_distribution"]["total_count"] == 5,
-           "overview reports geo distribution total");
+    expect(db_overview_body["geo_distribution"]["total_count"] == 3,
+           "overview reports online device geo distribution total");
     expect(db_overview_body["geo_distribution"]["foreign_count"] == 1,
            "overview reports foreign user count");
     bool found_zhejiang = false;

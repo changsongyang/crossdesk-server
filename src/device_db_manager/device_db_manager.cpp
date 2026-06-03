@@ -1577,7 +1577,9 @@ ClientGeoDistribution DeviceDBManager::GetClientGeoDistribution() {
   const char* sql =
       "SELECT geo_country, geo_region, geo_location, COUNT(*) "
       "FROM device_presence "
-      "WHERE device_id NOT LIKE 'C-%' "
+      "WHERE online = 1 "
+      "AND device_id NOT LIKE 'web-%' "
+      "AND device_id NOT LIKE 'C-%' "
       "GROUP BY geo_country, geo_region, geo_location;";
 
   sqlite3_stmt* stmt = nullptr;

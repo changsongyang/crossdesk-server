@@ -4,6 +4,7 @@
 #include <asio/ssl.hpp>
 #include <cstdlib>
 #include <iomanip>
+#include <initializer_list>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <sstream>
@@ -12,10 +13,10 @@
 
 namespace {
 
-constexpr char kGeoHost[] = "api.ipinfo.io";
+constexpr char kGeoHost[] = "api.ip2location.io";
 constexpr char kGeoPort[] = "443";
 constexpr char kGeoScheme[] = "https";
-constexpr char kGeoPathTemplate[] = "/lite/{ip}?token={token}";
+constexpr char kGeoPathTemplate[] = "/?key={key}&ip={ip}";
 constexpr int kDefaultTimeoutMs = 1200;
 
 std::string GetEnvString(const char* name, const char* fallback) {
@@ -83,12 +84,12 @@ std::string LookupPath(const std::string& ip) {
   std::string path =
       GetEnvString("CROSSDESK_GEOIP_PATH", kGeoPathTemplate);
   std::string encoded_ip = UrlEncode(ip);
-  std::string token = GetEnvString("CROSSDESK_GEOIP_TOKEN", "");
-  if (path.find("{token}") != std::string::npos && token.empty()) {
-    LOG_WARN("GeoIP lookup enabled but CROSSDESK_GEOIP_TOKEN is empty");
+  std::string key = GetEnvString("CROSSDESK_GEOIP_KEY", "");
+  if (path.find("{key}") != std::string::npos && key.empty()) {
+    LOG_WARN("GeoIP lookup enabled but CROSSDESK_GEOIP_KEY is empty");
     return "";
   }
-  ReplaceAll(&path, "{token}", UrlEncode(token));
+  ReplaceAll(&path, "{key}", UrlEncode(key));
   if (path.find("{ip}") == std::string::npos) {
     return path + encoded_ip;
   }
@@ -127,6 +128,53 @@ bool IsPrivateOrLocalIp(const std::string& ip) {
 std::string JsonString(const nlohmann::json& body, const char* key) {
   auto it = body.find(key);
   return it != body.end() && it->is_string() ? it->get<std::string>() : "";
+}
+
+std::string FirstJsonString(
+    const nlohmann::json& body, std::initializer_list<const char*> keys) {
+  for (const char* key : keys) {
+    std::string value = JsonString(body, key);
+    if (!value.empty()) {
+      return value;
+    }
+  }
+  return "";
+}
+
+std::string ToLowerAscii(std::string value) {
+  for (char& ch : value) {
+    if (ch >= 'A' && ch <= 'Z') {
+      ch = static_cast<char>(ch - 'A' + 'a');
+    }
+  }
+  return value;
+}
+
+bool SameText(const std::string& lhs, const std::string& rhs) {
+  return !lhs.empty() && ToLowerAscii(lhs) == ToLowerAscii(rhs);
+}
+
+void AppendLocationPart(std::string* location, const std::string& part) {
+  if (!location || part.empty()) {
+    return;
+  }
+  if (!location->empty()) {
+    *location += ", ";
+  }
+  *location += part;
+}
+
+std::string BuildLocation(const ClientNetworkInfo& info) {
+  std::string location;
+  AppendLocationPart(&location, info.city);
+  if (!SameText(info.region, info.city)) {
+    AppendLocationPart(&location, info.region);
+  }
+  if (!SameText(info.country, info.city) &&
+      !SameText(info.country, info.region)) {
+    AppendLocationPart(&location, info.country);
+  }
+  return location;
 }
 
 std::string BuildHttpRequest(const std::string& host, const std::string& port,
@@ -289,11 +337,15 @@ ClientNetworkInfo ParseGeoJson(const std::string& body_text,
   info.client_ip = ip;
   try {
     nlohmann::json body = nlohmann::json::parse(body_text);
-    info.country = JsonString(body, "country");
-    if (info.country.empty()) {
-      info.country = JsonString(body, "country_code");
+    info.country = FirstJsonString(
+        body, {"country_name", "country", "country_code"});
+    info.region = FirstJsonString(
+        body, {"region_name", "region", "province", "state"});
+    info.city = FirstJsonString(body, {"city_name", "city"});
+    info.location = JsonString(body, "location");
+    if (info.location.empty()) {
+      info.location = BuildLocation(info);
     }
-    info.location = info.country;
   } catch (const std::exception& e) {
     LOG_WARN("GeoIP lookup parse failed for [{}]: {}", ip, e.what());
   }
