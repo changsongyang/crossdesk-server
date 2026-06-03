@@ -168,9 +168,17 @@ const char kAdminHtml[] = R"HTML(<!doctype html>
     .segments { display: flex; gap: 6px; margin: 0 0 12px; overflow-x: auto; padding-bottom: 2px; }
     .segments button { white-space: nowrap; border-color: #d0d5dd; color: #344054; }
     .segments button.active { background: #1264a3; border-color: #1264a3; color: #ffffff; }
-    .presence-table th:nth-child(1) { min-width: 190px; }
-    .presence-table th:nth-child(3) { min-width: 150px; }
-    .presence-table th:nth-child(5) { min-width: 130px; }
+    .presence-table { table-layout: fixed; }
+    .presence-table th, .presence-table td { min-width: 0; overflow-wrap: anywhere; }
+    .presence-table th:nth-child(1), .presence-table td:nth-child(1) { width: 27%; }
+    .presence-table th:nth-child(2), .presence-table td:nth-child(2) { width: 13%; }
+    .presence-table th:nth-child(3), .presence-table td:nth-child(3) { width: 20%; }
+    .presence-table th:nth-child(4), .presence-table td:nth-child(4) { width: 16%; }
+    .presence-table th:nth-child(5), .presence-table td:nth-child(5) { width: 11%; }
+    .presence-table th:nth-child(6), .presence-table td:nth-child(6) { width: 13%; }
+    .presence-table th:nth-child(5), .presence-table td:nth-child(5),
+    .presence-table th:nth-child(6), .presence-table td:nth-child(6) { overflow-wrap: normal; }
+    .presence-table td:nth-child(6) button { min-width: 0; padding: 6px 8px; white-space: nowrap; width: 100%; }
     .sessions-table td:nth-child(1), .sessions-table td:nth-child(2) { word-break: break-all; }
     .device-id { font-weight: 600; word-break: break-all; }
     .subline { display: block; color: #667085; font-size: 12px; margin-top: 3px; }
