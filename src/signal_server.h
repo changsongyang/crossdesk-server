@@ -7,11 +7,16 @@
 #ifndef _SIGNAL_SERVER_H_
 #define _SIGNAL_SERVER_H_
 
+#include <condition_variable>
 #include <functional>
 #include <map>
 #include <memory>
-#include <nlohmann/json.hpp>
+#include <mutex>
+#include <queue>
 #include <string>
+#include <thread>
+
+#include <nlohmann/json.hpp>
 #include <websocketpp/config/asio.hpp>
 #include <websocketpp/http/constants.hpp>
 #include <websocketpp/server.hpp>
@@ -49,11 +54,21 @@ class SignalServer {
   void OnMessage(websocketpp::connection_hdl hdl, server::message_ptr msg);
 
  private:
+  struct ClientNetworkInfoJob {
+    std::string device_id;
+    std::string client_ip;
+  };
+
   void ScheduleRuntimeHeartbeat();
   void ScheduleRecoveredSessionCleanup();
   std::string GetClientIp(websocketpp::connection_hdl hdl);
-  void RecordClientNetworkInfo(websocketpp::connection_hdl hdl,
+  void EnqueueClientNetworkInfo(websocketpp::connection_hdl hdl,
                                const std::string& device_id);
+  void RecordClientNetworkInfo(const std::string& client_ip,
+                               const std::string& device_id);
+  void StartClientNetworkInfoWorker();
+  void StopClientNetworkInfoWorker();
+  void ProcessClientNetworkInfoJobs();
 
   server server_;
   uint16_t port_ = 9090;
@@ -74,6 +89,12 @@ class SignalServer {
   std::unique_ptr<PresenceManager> presence_manager_;
   std::unique_ptr<AdminAuth> admin_auth_;
   std::unique_ptr<AdminController> admin_controller_;
+
+  std::mutex network_info_mutex_;
+  std::condition_variable network_info_cv_;
+  std::queue<ClientNetworkInfoJob> network_info_jobs_;
+  std::thread network_info_worker_;
+  bool network_info_stop_ = false;
 };
 
 #endif

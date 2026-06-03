@@ -14,6 +14,7 @@ namespace {
 
 constexpr long kRuntimeHeartbeatIntervalMs = 5000;
 constexpr long kRecoveredSessionCleanupDelayMs = 120000;
+constexpr size_t kMaxClientNetworkInfoJobs = 1024;
 
 void SetJsonResponse(server::connection_ptr con,
                      websocketpp::http::status_code::value status,
@@ -131,6 +132,7 @@ SignalServer::SignalServer() {
       device_db_manager_.get(), [this](const std::string& id, json msg) {
         SendMsg(transmission_manager_->GetWsHandle(id), msg);
       });
+  StartClientNetworkInfoWorker();
 }
 
 SignalServer::SignalServer(uint16_t port, std::string certs_dir,
@@ -204,9 +206,10 @@ SignalServer::SignalServer(uint16_t port, std::string certs_dir,
       device_db_manager_.get(), [this](const std::string& id, json msg) {
         SendMsg(transmission_manager_->GetWsHandle(id), msg);
       });
+  StartClientNetworkInfoWorker();
 }
 
-SignalServer::~SignalServer() {}
+SignalServer::~SignalServer() { StopClientNetworkInfoWorker(); }
 
 std::string SignalServer::GetClientIp(websocketpp::connection_hdl hdl) {
   try {
@@ -224,8 +227,8 @@ std::string SignalServer::GetClientIp(websocketpp::connection_hdl hdl) {
   return "";
 }
 
-void SignalServer::RecordClientNetworkInfo(websocketpp::connection_hdl hdl,
-                                           const std::string& device_id) {
+void SignalServer::EnqueueClientNetworkInfo(websocketpp::connection_hdl hdl,
+                                            const std::string& device_id) {
   if (!device_db_manager_ || device_id.empty()) {
     return;
   }
@@ -239,6 +242,23 @@ void SignalServer::RecordClientNetworkInfo(websocketpp::connection_hdl hdl,
     client_ip = GetClientIp(hdl);
   }
 
+  {
+    std::lock_guard<std::mutex> lock(network_info_mutex_);
+    if (network_info_jobs_.size() >= kMaxClientNetworkInfoJobs) {
+      LOG_WARN("Client network info queue is full, dropping [{}]", device_id);
+      return;
+    }
+    network_info_jobs_.push({device_id, client_ip});
+  }
+  network_info_cv_.notify_one();
+}
+
+void SignalServer::RecordClientNetworkInfo(const std::string& client_ip,
+                                           const std::string& device_id) {
+  if (!device_db_manager_ || device_id.empty()) {
+    return;
+  }
+
   ClientNetworkInfo network_info;
   network_info.client_ip = client_ip;
   if (geo_location_resolver_) {
@@ -249,6 +269,49 @@ void SignalServer::RecordClientNetworkInfo(websocketpp::connection_hdl hdl,
              network_info.client_ip,
              network_info.location.empty() ? "Unknown"
                                            : network_info.location);
+  }
+}
+
+void SignalServer::StartClientNetworkInfoWorker() {
+  if (network_info_worker_.joinable()) {
+    return;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(network_info_mutex_);
+    network_info_stop_ = false;
+  }
+  network_info_worker_ =
+      std::thread(&SignalServer::ProcessClientNetworkInfoJobs, this);
+}
+
+void SignalServer::StopClientNetworkInfoWorker() {
+  {
+    std::lock_guard<std::mutex> lock(network_info_mutex_);
+    network_info_stop_ = true;
+  }
+  network_info_cv_.notify_all();
+  if (network_info_worker_.joinable()) {
+    network_info_worker_.join();
+  }
+}
+
+void SignalServer::ProcessClientNetworkInfoJobs() {
+  while (true) {
+    ClientNetworkInfoJob job;
+    {
+      std::unique_lock<std::mutex> lock(network_info_mutex_);
+      network_info_cv_.wait(lock, [this] {
+        return network_info_stop_ || !network_info_jobs_.empty();
+      });
+      if (network_info_stop_ && network_info_jobs_.empty()) {
+        break;
+      }
+      job = std::move(network_info_jobs_.front());
+      network_info_jobs_.pop();
+    }
+
+    RecordClientNetworkInfo(job.client_ip, job.device_id);
   }
 }
 
@@ -565,7 +628,7 @@ void SignalServer::OnMessage(websocketpp::connection_hdl hdl,
           std::string id = transmission_manager_->GetUserId(hdl);
           if (!id.empty()) {
             presence_manager_->OnLogin(id, id, hdl);
-            RecordClientNetworkInfo(hdl, id);
+            EnqueueClientNetworkInfo(hdl, id);
           }
         }
         break;
