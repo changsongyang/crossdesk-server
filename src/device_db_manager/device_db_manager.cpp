@@ -147,15 +147,26 @@ std::vector<std::string> SplitCommaSeparatedIds(const std::string& value) {
   return result;
 }
 
-std::string DevicePresenceFilterClause(const std::string& filter) {
+std::string DevicePresenceKindClause(const std::string& kind) {
+  std::string normalized = ToLower(kind);
+  if (normalized == "web") {
+    return "device_id LIKE 'web-%' ";
+  }
+  if (normalized == "all") {
+    return "device_id NOT LIKE 'C-%' ";
+  }
+  return "device_id NOT LIKE 'web-%' "
+         "AND device_id NOT LIKE 'C-%' ";
+}
+
+std::string DevicePresenceFilterClause(const std::string& filter,
+                                       const std::string& kind) {
   std::string normalized = ToLower(filter);
   if (normalized == "web") {
     return "device_id LIKE 'web-%' ";
   }
 
-  std::string clause =
-      "device_id NOT LIKE 'web-%' "
-      "AND device_id NOT LIKE 'C-%' ";
+  std::string clause = DevicePresenceKindClause(kind);
   if (normalized == "online") {
     clause += "AND online = 1 ";
   } else if (normalized == "offline") {
@@ -1438,7 +1449,8 @@ int DeviceDBManager::CountOnlineDevices(const std::string& search) {
 }
 
 int DeviceDBManager::CountDevicePresence(const std::string& search,
-                                         const std::string& filter) {
+                                         const std::string& filter,
+                                         const std::string& kind) {
   std::lock_guard<std::recursive_mutex> lock(db_mutex_);
   if (db_ == nullptr) {
     LOG_ERROR("Database is not initialized in CountDevicePresence.");
@@ -1446,7 +1458,7 @@ int DeviceDBManager::CountDevicePresence(const std::string& search,
   }
 
   std::string sql = "SELECT COUNT(*) FROM device_presence WHERE " +
-                    DevicePresenceFilterClause(filter);
+                    DevicePresenceFilterClause(filter, kind);
   if (!search.empty()) {
     sql += "AND device_id LIKE ? ESCAPE '\\' ";
   }
@@ -1471,7 +1483,7 @@ int DeviceDBManager::CountDevicePresence(const std::string& search,
 }
 
 DevicePresenceCounts DeviceDBManager::CountDevicePresenceByFilters(
-    const std::string& search) {
+    const std::string& search, const std::string& kind) {
   std::lock_guard<std::recursive_mutex> lock(db_mutex_);
   DevicePresenceCounts counts;
   if (db_ == nullptr) {
@@ -1479,16 +1491,21 @@ DevicePresenceCounts DeviceDBManager::CountDevicePresenceByFilters(
     return counts;
   }
 
+  const std::string kind_clause = DevicePresenceKindClause(kind);
   std::string sql =
       "SELECT "
-      "COALESCE(SUM(CASE WHEN device_id NOT LIKE 'web-%' "
-      "AND device_id NOT LIKE 'C-%' THEN 1 ELSE 0 END), 0), "
-      "COALESCE(SUM(CASE WHEN device_id NOT LIKE 'web-%' "
-      "AND device_id NOT LIKE 'C-%' AND online = 1 THEN 1 ELSE 0 END), 0), "
-      "COALESCE(SUM(CASE WHEN device_id NOT LIKE 'web-%' "
-      "AND device_id NOT LIKE 'C-%' AND online = 0 THEN 1 ELSE 0 END), 0), "
-      "COALESCE(SUM(CASE WHEN device_id NOT LIKE 'web-%' "
-      "AND device_id NOT LIKE 'C-%' AND EXISTS ("
+      "COALESCE(SUM(CASE WHEN " +
+      kind_clause +
+      "THEN 1 ELSE 0 END), 0), "
+      "COALESCE(SUM(CASE WHEN " +
+      kind_clause +
+      "AND online = 1 THEN 1 ELSE 0 END), 0), "
+      "COALESCE(SUM(CASE WHEN " +
+      kind_clause +
+      "AND online = 0 THEN 1 ELSE 0 END), 0), "
+      "COALESCE(SUM(CASE WHEN " +
+      kind_clause +
+      "AND EXISTS ("
       "SELECT 1 FROM remote_control_sessions "
       "WHERE normalized_guest_id = device_presence.device_id "
       "OR normalized_host_id = device_presence.device_id) "
@@ -1717,7 +1734,7 @@ std::vector<OnlineDeviceInfo> DeviceDBManager::ListOnlineDevices(
 std::vector<OnlineDeviceInfo> DeviceDBManager::ListDevicePresence(
     size_t limit, size_t offset, const std::string& search,
     const std::string& filter, const std::string& sort,
-    const std::string& order) {
+    const std::string& order, const std::string& kind) {
   std::lock_guard<std::recursive_mutex> lock(db_mutex_);
   std::vector<OnlineDeviceInfo> result;
   if (db_ == nullptr) {
@@ -1774,7 +1791,7 @@ std::vector<OnlineDeviceInfo> DeviceDBManager::ListDevicePresence(
       "client_ip, geo_country, geo_region, geo_city, geo_location "
       "FROM device_presence "
       "WHERE " +
-      DevicePresenceFilterClause(filter);
+      DevicePresenceFilterClause(filter, kind);
   if (!search.empty()) {
     sql += "AND device_id LIKE ? ESCAPE '\\' ";
   }

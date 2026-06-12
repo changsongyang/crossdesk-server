@@ -201,7 +201,7 @@ sudo docker run -d \
 https://your-domain.example.com:9090/admin
 ```
 
-后台页面会显示在线设备数、在线 Web 客户端数、活动远控会话、累计在线时长、累计控制时长和累计被控时长，并支持断开选中的远控会话。页面包含中国用户分布地图，可用颜色深浅查看各省份用户数量，国外用户会单独汇总展示。客户端状态列表默认展示在线设备，并提供在线、远控中、离线、全部和 Web 客户端筛选；列表支持搜索、分页、排序和展开详情，并显示当前在线连接 IP 解析出的地理位置。客户端 IP 和地理位置只作为在线状态保存在内存中，不作为设备资料持久化到数据库；客户端在线时本次在线时长会实时刷新，下线后保留记录并显示最后在线时间点。
+后台页面会显示在线设备数、在线 Web 客户端数、活动远控会话、累计在线时长、累计控制时长和累计被控时长，并支持断开选中的远控会话。页面包含中国用户分布地图，可用颜色深浅查看各省份用户数量，国外用户会单独汇总展示。客户端状态列表默认展示在线 PC 客户端，并提供在线、远控中、离线、全部状态筛选以及 PC/Web 客户端类别选择；列表支持搜索、分页、排序和展开详情，并显示当前在线连接 IP 解析出的地理位置。客户端 IP 和地理位置只作为在线状态保存在内存中，不作为设备资料持久化到数据库；客户端在线时本次在线时长会实时刷新，下线后保留记录并显示最后在线时间点。
 
 公网 IP 的地理位置默认不访问外部服务，内网、回环和 Docker 私有网段会显示为 `Private network`。如需开启公网 GeoIP 查询，可设置 `CROSSDESK_GEOIP_LOOKUP=1` 并通过 `CROSSDESK_GEOIP_KEY` 配置 IP2Location API key；默认请求 `https://api.ip2location.io/?key={key}&ip={ip}`。解析只读取 `country_name`、`country_code` 和 `region_name`，并拼出类似 `California, United States of America` 的位置文本，不再读取或展示城市。地域统计只有在国家和可识别省份都缺失时才计入未解析。使用 IP2Location.io 免费计划或无 key API 时需要展示归因，后台地域分布区域会显示 `CrossDesk uses IP2Location.io IP geolocation web service.` 并链接到 `https://www.ip2location.io`。查询端点可通过 `CROSSDESK_GEOIP_SCHEME`、`CROSSDESK_GEOIP_HOST`、`CROSSDESK_GEOIP_PORT` 和 `CROSSDESK_GEOIP_PATH` 配置，其中路径里的 `{ip}` 和 `{key}` 会被替换。查询超时时间可通过 `CROSSDESK_GEOIP_TIMEOUT_MS` 调整，默认 1200ms。成功 IP 结果会缓存；失败结果不作为设备位置缓存，而是由后台 IP 队列按 IP 去重并按退避重新入队。重试时如果已没有在线设备使用该 IP，任务会直接丢弃。退避默认从 60000ms 开始翻倍，最高 1800000ms，可通过 `CROSSDESK_GEOIP_FAILURE_TTL_MS` 和 `CROSSDESK_GEOIP_FAILURE_MAX_TTL_MS` 调整。
 

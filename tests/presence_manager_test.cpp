@@ -221,6 +221,22 @@ int main() {
     expect(presence_counts.all == 3 && presence_counts.online == 2 &&
                presence_counts.offline == 1 && presence_counts.web == 1,
            "presence count aggregation reports all filters");
+    auto web_presence_counts = db.CountDevicePresenceByFilters("", "web");
+    expect(web_presence_counts.all == 1 && web_presence_counts.online == 1 &&
+               web_presence_counts.offline == 0,
+           "presence count aggregation supports web client kind");
+    auto all_client_presence_counts =
+        db.CountDevicePresenceByFilters("", "all");
+    expect(all_client_presence_counts.all == 4 &&
+               all_client_presence_counts.online == 3 &&
+               all_client_presence_counts.offline == 1,
+           "presence count aggregation supports all client kinds");
+    expect(db.CountDevicePresence("", "online", "web") == 1,
+           "presence count supports online web client kind");
+    auto web_presence =
+        db.ListDevicePresence(10, 0, "", "all", "device_id", "asc", "web");
+    expect(web_presence.size() == 1 && web_presence[0].device_id == "web-1",
+           "presence list supports web client kind");
     auto sorted_presence =
         db.ListDevicePresence(10, 0, "", "all", "device_id", "asc");
     expect(!sorted_presence.empty() &&

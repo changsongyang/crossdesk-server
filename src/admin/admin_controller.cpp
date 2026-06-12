@@ -153,6 +153,17 @@ bool IsLocationSort(const std::string& sort) {
   return LowerAscii(sort) == "location";
 }
 
+std::string NormalizeDeviceKind(const std::string& kind) {
+  std::string normalized = LowerAscii(kind);
+  if (normalized == "web") {
+    return "web";
+  }
+  if (normalized == "all") {
+    return "all";
+  }
+  return "pc";
+}
+
 ClientNetworkInfo CurrentNetworkInfo(PresenceManager* presence,
                                      const OnlineDeviceInfo& device) {
   ClientNetworkInfo network_info;
@@ -537,6 +548,8 @@ AdminHttpResponse AdminController::HandleOverview(
   std::string device_search = QueryStringParam(params, "device_search");
   std::string device_filter =
       QueryStringParam(params, "device_filter", "online");
+  std::string device_kind = NormalizeDeviceKind(
+      QueryStringParam(params, "device_kind", "pc"));
   std::string device_sort =
       QueryStringParam(params, "device_sort", "status");
   std::string device_order =
@@ -554,21 +567,30 @@ AdminHttpResponse AdminController::HandleOverview(
                                   {"offline", 0},
                                   {"active", 0},
                                   {"web", 0}};
+  nlohmann::json device_kind_counts = {{"pc", 0}, {"web", 0}};
   size_t online_device_fallback = 0;
   if (db_) {
     DevicePresenceCounts counts =
-        db_->CountDevicePresenceByFilters(device_search);
+        db_->CountDevicePresenceByFilters(device_search, device_kind);
+    DevicePresenceCounts pc_counts =
+        device_kind == "pc"
+            ? counts
+            : db_->CountDevicePresenceByFilters(device_search, "pc");
+    DevicePresenceCounts web_counts =
+        device_kind == "web"
+            ? counts
+            : db_->CountDevicePresenceByFilters(device_search, "web");
     device_counts["all"] = counts.all;
     device_counts["online"] = counts.online;
     device_counts["offline"] = counts.offline;
     device_counts["active"] = counts.active;
-    device_counts["web"] = counts.web;
+    device_counts["web"] = web_counts.all;
+    device_kind_counts["pc"] = pc_counts.all;
+    device_kind_counts["web"] = web_counts.all;
     devices_total =
         static_cast<size_t>(CountForDeviceFilter(counts, device_filter));
     if (!presence_) {
-      online_device_fallback =
-          device_search.empty() ? static_cast<size_t>(counts.online)
-                                : static_cast<size_t>(db_->CountOnlineDevices());
+      online_device_fallback = static_cast<size_t>(db_->CountOnlineDevices());
     }
     const bool location_sort = IsLocationSort(device_sort);
     size_t query_limit = location_sort ? devices_total : device_limit;
@@ -576,7 +598,7 @@ AdminHttpResponse AdminController::HandleOverview(
     std::string query_sort = location_sort ? "status" : device_sort;
     std::vector<OnlineDeviceInfo> device_rows = db_->ListDevicePresence(
         query_limit, query_offset, device_search, device_filter, query_sort,
-        device_order);
+        device_order, device_kind);
     if (location_sort) {
       SortDevicesByDisplayedLocation(&device_rows, presence_, device_order);
       ApplyDevicePage(&device_rows, device_offset, device_limit);
@@ -658,6 +680,7 @@ AdminHttpResponse AdminController::HandleOverview(
                                  {"total", devices_total},
                                  {"search", device_search},
                                  {"filter", device_filter},
+                                 {"kind", device_kind},
                                  {"sort", device_sort},
                                  {"order", device_order}};
   nlohmann::json sessions_page = {{"limit", session_limit},
@@ -669,6 +692,7 @@ AdminHttpResponse AdminController::HandleOverview(
                             {"devices", devices},
                             {"devices_page", devices_page},
                             {"device_counts", device_counts},
+                            {"device_kind_counts", device_kind_counts},
                             {"geo_distribution", geo_distribution},
                             {"sessions", sessions},
                             {"sessions_page", sessions_page}});

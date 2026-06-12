@@ -229,6 +229,10 @@ int main() {
            "overview search scopes active count");
     expect(db_overview_body["device_counts"]["web"] == 0,
            "overview search scopes web count");
+    expect(db_overview_body["device_kind_counts"]["pc"] == 1,
+           "overview reports searched PC client kind count");
+    expect(db_overview_body["device_kind_counts"]["web"] == 0,
+           "overview reports searched web client kind count");
     expect(db_overview_body["geo_distribution"]["total_count"] == 4,
            "overview geo distribution total includes web clients");
     expect(db_overview_body["geo_distribution"]["domestic_count"] == 2,
@@ -362,6 +366,26 @@ int main() {
            "overview returns web clients on web filter");
     expect(web_body["devices"][0]["kind"] == "web",
            "overview marks web client kind");
+
+    AdminHttpResponse web_kind_overview = db_controller.Handle(
+        {"GET",
+         "/api/admin/overview?device_kind=web&device_filter=online",
+         "",
+         "cd_admin_session=" + *token});
+    expect(web_kind_overview.status == 200,
+           "overview with web client kind returns ok");
+    auto web_kind_body = nlohmann::json::parse(web_kind_overview.body);
+    expect(web_kind_body["devices_page"]["kind"] == "web",
+           "overview echoes normalized web client kind");
+    expect(web_kind_body["device_counts"]["online"] == 1,
+           "overview counts online web clients for selected kind");
+    expect(web_kind_body["device_kind_counts"]["pc"] == 4,
+           "overview reports PC client kind count");
+    expect(web_kind_body["device_kind_counts"]["web"] == 1,
+           "overview reports web client kind count");
+    expect(web_kind_body["devices"].size() == 1 &&
+               web_kind_body["devices"][0]["kind"] == "web",
+           "overview filters device list by web client kind");
 
     auto restored_transmission = std::make_shared<TransmissionManager>();
     AdminController restored_controller(

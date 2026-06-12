@@ -8,6 +8,7 @@
         total: 0,
         search: '',
         filter: 'online',
+        kind: 'pc',
         sort: 'status',
         order: 'desc'
       },
@@ -589,7 +590,7 @@
         const clientCell = document.createElement('td');
         labelCell(clientCell, 'Client');
         appendText(clientCell, 'div', device.id, 'device-id');
-        appendText(clientCell, 'span', device.kind === 'web' ? 'web client' : 'device', 'subline');
+        appendText(clientCell, 'span', device.kind === 'web' ? 'web client' : 'PC client', 'subline');
         row.appendChild(clientCell);
 
         const statusCell = document.createElement('td');
@@ -723,6 +724,7 @@
       params.set('device_limit', state.devices.limit);
       params.set('device_offset', state.devices.offset);
       params.set('device_filter', state.devices.filter);
+      params.set('device_kind', state.devices.kind);
       params.set('device_sort', state.devices.sort);
       params.set('device_order', state.devices.order);
       params.set('session_limit', state.sessions.limit);
@@ -754,6 +756,7 @@
       document.getElementById(`${prefix}-next`).disabled = page.offset + page.limit >= page.total;
       document.getElementById(`${prefix}-limit`).value = String(page.limit);
       if (kind === 'devices') {
+        document.getElementById('device-kind').value = page.kind;
         document.getElementById('device-sort').value = page.sort;
         document.getElementById('device-order').textContent = page.order === 'asc' ? 'ASC' : 'DESC';
         document.getElementById('device-order').title = page.order === 'asc' ? 'Ascending' : 'Descending';
@@ -762,7 +765,7 @@
 
     function applyDeviceCounts(counts) {
       if (counts) {
-        ['all', 'online', 'offline', 'active', 'web'].forEach(filter => {
+        ['all', 'online', 'offline', 'active'].forEach(filter => {
           const count = Number(counts[filter]) || 0;
           const countElement = document.getElementById(`device-count-${filter}`);
           if (countElement) countElement.textContent = count;
@@ -772,6 +775,20 @@
         button.classList.toggle('active', button.dataset.deviceFilter === state.devices.filter);
         button.setAttribute('aria-selected', button.dataset.deviceFilter === state.devices.filter ? 'true' : 'false');
       });
+    }
+
+    function applyDeviceKindCounts(counts) {
+      const kindSelect = document.getElementById('device-kind');
+      if (!kindSelect) return;
+      const labels = {pc: 'PC', web: 'Web'};
+      Array.from(kindSelect.options).forEach(option => {
+        const value = option.value;
+        const count = counts && Object.prototype.hasOwnProperty.call(counts, value)
+          ? Number(counts[value]) || 0
+          : null;
+        option.textContent = count === null ? labels[value] : `${labels[value]} ${count}`;
+      });
+      kindSelect.value = state.devices.kind;
     }
 
     function applyStats(stats) {
@@ -868,6 +885,9 @@
       }
       document.getElementById('refresh-error').textContent = '';
       applyStats(data.stats);
+      if (data.devices_page && data.devices_page.kind) {
+        state.devices.kind = data.devices_page.kind;
+      }
       const reloadDevices = syncPage(state.devices, data.devices_page);
       const reloadSessions = syncPage(state.sessions, data.sessions_page);
       if (reloadDevices || reloadSessions) {
@@ -875,6 +895,7 @@
         return refreshLists();
       }
       applyDeviceCounts(data.device_counts);
+      applyDeviceKindCounts(data.device_kind_counts);
       renderGeoDistribution(data.geo_distribution);
       renderDevices(data.devices || []);
       renderSessions(data.sessions || []);
@@ -914,6 +935,13 @@
         applyDeviceCounts();
         refreshLists();
       });
+    });
+    document.getElementById('device-kind').addEventListener('change', (event) => {
+      state.devices.kind = event.target.value === 'web' ? 'web' : 'pc';
+      state.devices.offset = 0;
+      expandedDevices.clear();
+      applyDeviceKindCounts();
+      refreshLists();
     });
     document.getElementById('device-sort').addEventListener('change', (event) => {
       state.devices.sort = event.target.value;
@@ -996,6 +1024,7 @@
       }
     });
     applyDeviceCounts();
+    applyDeviceKindCounts();
     renderGeoDistribution();
     refreshStats().then((ok) => {
       if (ok) showDashboard();

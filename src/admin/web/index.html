@@ -87,6 +87,10 @@
             <h2>Client Presence</h2>
             <div class="actions">
               <input id="device-search" placeholder="Search device ID">
+              <select id="device-kind" aria-label="Client category">
+                <option value="pc">PC</option>
+                <option value="web">Web</option>
+              </select>
               <select id="device-sort" aria-label="Device sort">
                 <option value="status">Status</option>
                 <option value="updated_at">Last seen</option>
@@ -112,7 +116,6 @@
             <button type="button" data-device-filter="active">Remote <span id="device-count-active">0</span></button>
             <button type="button" data-device-filter="offline">Offline <span id="device-count-offline">0</span></button>
             <button type="button" data-device-filter="all">All <span id="device-count-all">0</span></button>
-            <button type="button" data-device-filter="web">Web <span id="device-count-web">0</span></button>
           </div>
           <div class="table-wrap">
             <table class="presence-table">

@@ -128,9 +128,10 @@ class DeviceDBManager {
   int GetOnlineDeviceCount();
   int CountOnlineDevices(const std::string& search = "");
   int CountDevicePresence(const std::string& search = "",
-                          const std::string& filter = "all");
+                          const std::string& filter = "all",
+                          const std::string& kind = "pc");
   DevicePresenceCounts CountDevicePresenceByFilters(
-      const std::string& search = "");
+      const std::string& search = "", const std::string& kind = "pc");
   OnlineDurationStats GetOnlineDurationStats();
   ClientGeoDistribution GetClientGeoDistribution();
   std::vector<OnlineDeviceInfo> ListOnlineDevices();
@@ -140,7 +141,7 @@ class DeviceDBManager {
       size_t limit, size_t offset, const std::string& search,
       const std::string& filter = "all",
       const std::string& sort = "status",
-      const std::string& order = "desc");
+      const std::string& order = "desc", const std::string& kind = "pc");
   std::vector<std::pair<std::string, bool>> BatchQueryOnline(
       const std::vector<std::string>& device_ids);
   bool SetUserDevices(const std::string& user_id,
