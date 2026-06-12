@@ -201,6 +201,16 @@ int main() {
     expect(!sorted_presence.empty() &&
                sorted_presence[0].device_id == "device-1",
            "presence list supports device id sort");
+    auto known_location_first =
+        db.ListDevicePresence(10, 0, "", "all", "location", "desc");
+    expect(!known_location_first.empty() &&
+               !known_location_first[0].location.empty(),
+           "presence list location sort groups known locations first");
+    auto unknown_location_first =
+        db.ListDevicePresence(10, 0, "", "all", "location", "asc");
+    expect(!unknown_location_first.empty() &&
+               unknown_location_first[0].location.empty(),
+           "presence list location sort groups unknown locations first");
     auto offline_devices = db.ListDevicePresence(10, 0, "device-1");
     expect(offline_devices.size() == 1 && !offline_devices[0].online,
            "presence list includes offline device");

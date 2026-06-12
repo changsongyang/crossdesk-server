@@ -307,6 +307,45 @@ int main() {
     expect(active_body["devices"][2]["active_control_count"] == 1,
            "overview reports active control count");
 
+    AdminHttpResponse location_desc_overview = db_controller.Handle(
+        {"GET",
+         "/api/admin/overview?device_filter=all&device_sort=location&device_order=desc&device_limit=2",
+         "",
+         "cd_admin_session=" + *token});
+    expect(location_desc_overview.status == 200,
+           "overview with location status descending sort returns ok");
+    auto location_desc_body =
+        nlohmann::json::parse(location_desc_overview.body);
+    expect(location_desc_body["devices"].size() == 2,
+           "overview applies pagination after location status sort");
+    bool location_desc_has_current_location = false;
+    for (const auto& device : location_desc_body["devices"]) {
+      expect(!device["geo_location"].get<std::string>().empty(),
+             "overview location status descending shows known locations first");
+      if (device["id"] == "device-admin-1" &&
+          device["geo_location"] == "Test City, Test Region, Testland") {
+        location_desc_has_current_location = true;
+      }
+    }
+    expect(location_desc_has_current_location,
+           "overview location status sort uses current in-memory location");
+
+    AdminHttpResponse location_asc_overview = db_controller.Handle(
+        {"GET",
+         "/api/admin/overview?device_filter=all&device_sort=location&device_order=asc&device_limit=2",
+         "",
+         "cd_admin_session=" + *token});
+    expect(location_asc_overview.status == 200,
+           "overview with location status ascending sort returns ok");
+    auto location_asc_body =
+        nlohmann::json::parse(location_asc_overview.body);
+    expect(location_asc_body["devices"].size() == 2,
+           "overview returns unknown locations on first ascending page");
+    for (const auto& device : location_asc_body["devices"]) {
+      expect(device["geo_location"].get<std::string>().empty(),
+             "overview location status ascending shows unknown locations first");
+    }
+
     AdminHttpResponse web_overview = db_controller.Handle(
         {"GET", "/api/admin/overview?device_filter=web", "",
          "cd_admin_session=" + *token});

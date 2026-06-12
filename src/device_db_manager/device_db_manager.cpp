@@ -195,7 +195,8 @@ std::string DevicePresenceSortClause(const std::string& sort,
   } else if (normalized == "active_sessions") {
     expression = "active_control_count";
   } else if (normalized == "location") {
-    expression = "geo_location";
+    expression = "CASE WHEN TRIM(COALESCE(geo_location, '')) = '' "
+                 "THEN 0 ELSE 1 END";
   }
 
   return expression + " " + direction +

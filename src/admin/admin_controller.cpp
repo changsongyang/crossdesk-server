@@ -141,6 +141,18 @@ std::string ClientKind(const std::string& device_id) {
   return device_id.rfind("web-", 0) == 0 ? "web" : "device";
 }
 
+std::string LowerAscii(std::string value) {
+  std::transform(value.begin(), value.end(), value.begin(),
+                 [](unsigned char ch) {
+                   return static_cast<char>(std::tolower(ch));
+                 });
+  return value;
+}
+
+bool IsLocationSort(const std::string& sort) {
+  return LowerAscii(sort) == "location";
+}
+
 ClientNetworkInfo CurrentNetworkInfo(PresenceManager* presence,
                                      const OnlineDeviceInfo& device) {
   ClientNetworkInfo network_info;
@@ -148,6 +160,63 @@ ClientNetworkInfo CurrentNetworkInfo(PresenceManager* presence,
     presence->GetDeviceNetworkInfo(device.device_id, &network_info);
   }
   return network_info;
+}
+
+bool HasDisplayedLocation(PresenceManager* presence,
+                          const OnlineDeviceInfo& device) {
+  return !CurrentNetworkInfo(presence, device).location.empty();
+}
+
+void SortDevicesByDisplayedLocation(
+    std::vector<OnlineDeviceInfo>* devices, PresenceManager* presence,
+    const std::string& order) {
+  if (!devices) {
+    return;
+  }
+
+  const bool ascending = LowerAscii(order) == "asc";
+  std::unordered_map<std::string, bool> known_location_cache;
+  auto has_location = [&](const OnlineDeviceInfo& device) {
+    auto cached = known_location_cache.find(device.device_id);
+    if (cached != known_location_cache.end()) {
+      return cached->second;
+    }
+    bool known = HasDisplayedLocation(presence, device);
+    known_location_cache.emplace(device.device_id, known);
+    return known;
+  };
+
+  std::sort(devices->begin(), devices->end(),
+            [&](const OnlineDeviceInfo& lhs, const OnlineDeviceInfo& rhs) {
+              const bool lhs_known = has_location(lhs);
+              const bool rhs_known = has_location(rhs);
+              if (lhs_known != rhs_known) {
+                return ascending ? !lhs_known : lhs_known;
+              }
+              if (lhs.online != rhs.online) {
+                return lhs.online > rhs.online;
+              }
+              if (lhs.updated_at != rhs.updated_at) {
+                return lhs.updated_at > rhs.updated_at;
+              }
+              return lhs.device_id < rhs.device_id;
+            });
+}
+
+void ApplyDevicePage(std::vector<OnlineDeviceInfo>* devices, size_t offset,
+                     size_t limit) {
+  if (!devices || offset >= devices->size() || limit == 0) {
+    if (devices) {
+      devices->clear();
+    }
+    return;
+  }
+
+  const size_t available = devices->size() - offset;
+  const size_t count = std::min(limit, available);
+  std::vector<OnlineDeviceInfo> page(devices->begin() + offset,
+                                     devices->begin() + offset + count);
+  devices->swap(page);
 }
 
 int64_t CountForDeviceFilter(const DevicePresenceCounts& counts,
@@ -501,9 +570,18 @@ AdminHttpResponse AdminController::HandleOverview(
           device_search.empty() ? static_cast<size_t>(counts.online)
                                 : static_cast<size_t>(db_->CountOnlineDevices());
     }
-    for (const auto& device :
-         db_->ListDevicePresence(device_limit, device_offset, device_search,
-                                 device_filter, device_sort, device_order)) {
+    const bool location_sort = IsLocationSort(device_sort);
+    size_t query_limit = location_sort ? devices_total : device_limit;
+    size_t query_offset = location_sort ? 0 : device_offset;
+    std::string query_sort = location_sort ? "status" : device_sort;
+    std::vector<OnlineDeviceInfo> device_rows = db_->ListDevicePresence(
+        query_limit, query_offset, device_search, device_filter, query_sort,
+        device_order);
+    if (location_sort) {
+      SortDevicesByDisplayedLocation(&device_rows, presence_, device_order);
+      ApplyDevicePage(&device_rows, device_offset, device_limit);
+    }
+    for (const auto& device : device_rows) {
       int64_t active_control_count = device.active_control_count;
       int64_t active_controlled_count = device.active_controlled_count;
       ClientNetworkInfo network_info = CurrentNetworkInfo(presence_, device);
