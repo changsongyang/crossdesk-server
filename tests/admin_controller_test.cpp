@@ -70,6 +70,12 @@ int main() {
   expect(admin_page.status == 200, "admin page returns static frontend");
   expect(admin_page.body.find("/admin/assets/admin.js") != std::string::npos,
          "admin page references separated frontend script");
+  expect(admin_page.body.find("CrossDesk uses IP2Location.io") !=
+             std::string::npos,
+         "admin page includes IP2Location attribution");
+  expect(admin_page.body.find("https://www.ip2location.io") !=
+             std::string::npos,
+         "admin page links IP2Location attribution");
   AdminHttpResponse admin_script =
       controller.Handle({"GET", "/admin/assets/admin.js", "", ""});
   expect(admin_script.status == 200, "admin script asset returns ok");
@@ -144,28 +150,28 @@ int main() {
     presence.OnLogin("device-admin-1", "device-admin-1", hdl);
     db.UpdateDeviceNetworkInfo(
         "device-admin-1",
-        {"10.0.0.1", "Stale Country", "Stale Region", "Stale City",
-         "Stale City, Stale Region, Stale Country"});
+        {"10.0.0.1", "Stale Country", "Stale Region", "",
+         "Stale Region, Stale Country"});
     presence.SetDeviceNetworkInfo(
         "device-admin-1",
-        {"203.0.113.8", "Testland", "Test Region", "Test City",
-         "Test City, Test Region, Testland"});
+        {"203.0.113.8", "Testland", "Test Region", "",
+         "Test Region, Testland"});
     presence.OnLogin("device-admin-zhejiang", "device-admin-zhejiang", hdl);
     presence.SetDeviceNetworkInfo(
         "device-admin-zhejiang",
-        {"198.51.100.8", "China", "Zhejiang", "Hangzhou",
-         "Hangzhou, Zhejiang, China"});
+        {"198.51.100.8", "China", "Zhejiang", "",
+         "Zhejiang, China"});
     presence.OnLogin("device-admin-offline", "device-admin-offline", hdl);
     presence.SetDeviceNetworkInfo(
         "device-admin-offline",
-        {"203.0.113.9", "Offline Country", "Offline Region", "Offline City",
-         "Offline City, Offline Region, Offline Country"});
+        {"203.0.113.9", "Offline Country", "Offline Region", "",
+         "Offline Region, Offline Country"});
     presence.OnLogout("device-admin-offline");
     presence.OnLogin("device-admin-control", "device-admin-control", hdl);
     presence.OnLogin("web-admin-1", "web-admin-1", hdl);
     presence.SetDeviceNetworkInfo(
         "web-admin-1",
-        {"198.51.100.10", "China", "Shanghai", "Shanghai",
+        {"198.51.100.10", "China", "Shanghai", "",
          "Shanghai, China"});
     db.StartRemoteControlSession("tx-admin", "device-admin-1",
                                  "device-admin-offline");
@@ -197,10 +203,10 @@ int main() {
            "overview reports device total controlled duration");
     expect(db_overview_body["devices"][0]["client_ip"] == "203.0.113.8",
            "overview reports current in-memory device client ip");
-    expect(db_overview_body["devices"][0]["geo_city"] == "Test City",
-           "overview reports current in-memory device geo city");
+    expect(db_overview_body["devices"][0]["geo_city"] == "",
+           "overview leaves geo city empty");
     expect(db_overview_body["devices"][0]["geo_location"] ==
-               "Test City, Test Region, Testland",
+               "Test Region, Testland",
            "overview ignores stale database geo location");
     expect(db_overview_body["devices"][0].contains("current_control_seconds"),
            "overview reports device current control duration");
@@ -323,7 +329,7 @@ int main() {
       expect(!device["geo_location"].get<std::string>().empty(),
              "overview location status descending shows known locations first");
       if (device["id"] == "device-admin-1" &&
-          device["geo_location"] == "Test City, Test Region, Testland") {
+          device["geo_location"] == "Test Region, Testland") {
         location_desc_has_current_location = true;
       }
     }

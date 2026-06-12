@@ -1597,18 +1597,17 @@ ClientGeoDistribution DeviceDBManager::GetClientGeoDistribution() {
     distribution.total_count += count;
 
     std::string province = NormalizeChinaProvince(region, location);
-    if (IsChinaCountry(country) || !province.empty()) {
-      if (province.empty()) {
-        distribution.unknown_count += count;
-      } else {
-        distribution.domestic_count += count;
-        province_counts[province] += count;
-      }
-    } else if (Trim(country).empty()) {
-      distribution.unknown_count += count;
-    } else {
+    country = Trim(country);
+    if (!province.empty()) {
+      distribution.domestic_count += count;
+      province_counts[province] += count;
+    } else if (IsChinaCountry(country)) {
+      distribution.domestic_count += count;
+    } else if (!country.empty()) {
       distribution.foreign_count += count;
-      country_counts[Trim(country)] += count;
+      country_counts[country] += count;
+    } else {
+      distribution.unknown_count += count;
     }
   }
   sqlite3_finalize(stmt);

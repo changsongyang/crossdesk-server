@@ -166,11 +166,11 @@ int main() {
          "resolver parses IP2Location country name");
   expect(ip2location.info.region == "California",
          "resolver parses IP2Location region name");
-  expect(ip2location.info.city == "Mountain View",
-         "resolver parses IP2Location city name");
+  expect(ip2location.info.city.empty(),
+         "resolver does not store IP2Location city name");
   expect(ip2location.info.location ==
-             "Mountain View, California, United States of America",
-         "resolver builds detailed IP2Location location");
+             "California, United States of America",
+         "resolver builds IP2Location location from region and country");
 
   ResolveResult country_only = ResolveWithStub(
       R"({"ip":"8.8.8.8","country_code":"US"})",

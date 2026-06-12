@@ -175,12 +175,8 @@ void AppendLocationPart(std::string* location, const std::string& part) {
 
 std::string BuildLocation(const ClientNetworkInfo& info) {
   std::string location;
-  AppendLocationPart(&location, info.city);
-  if (!SameText(info.region, info.city)) {
-    AppendLocationPart(&location, info.region);
-  }
-  if (!SameText(info.country, info.city) &&
-      !SameText(info.country, info.region)) {
+  AppendLocationPart(&location, info.region);
+  if (!SameText(info.country, info.region)) {
     AppendLocationPart(&location, info.country);
   }
   return location;
@@ -350,11 +346,7 @@ ClientNetworkInfo ParseGeoJson(const std::string& body_text,
         body, {"country_name", "country", "country_code"});
     info.region = FirstJsonString(
         body, {"region_name", "region", "province", "state"});
-    info.city = FirstJsonString(body, {"city_name", "city"});
-    info.location = JsonString(body, "location");
-    if (info.location.empty()) {
-      info.location = BuildLocation(info);
-    }
+    info.location = BuildLocation(info);
   } catch (const std::exception& e) {
     LOG_WARN("GeoIP lookup parse failed for [{}]: {}", ip, e.what());
   }

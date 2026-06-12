@@ -663,7 +663,6 @@
             activeControlledCount > 0, activeControlledCount);
           appendDetailItem(details, 'Location', locationLabel(device));
           appendDetailItem(details, 'Client IP', device.client_ip || '-');
-          appendDetailItem(details, 'City', device.geo_city || '-');
           appendDetailItem(details, 'Region', device.geo_region || '-');
           appendDetailItem(details, 'Country', device.geo_country || '-');
           appendDetailItem(details, 'Online since', formatTime(device.online_since));

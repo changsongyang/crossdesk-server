@@ -247,18 +247,17 @@ ClientGeoDistribution PresenceManager::GetClientGeoDistribution() const {
 
     const auto& info = it->second;
     std::string province = NormalizeChinaProvince(info.region, info.location);
-    if (IsChinaCountry(info.country) || !province.empty()) {
-      if (province.empty()) {
-        ++distribution.unknown_count;
-      } else {
-        ++distribution.domestic_count;
-        ++province_counts[province];
-      }
-    } else if (Trim(info.country).empty()) {
-      ++distribution.unknown_count;
-    } else {
+    std::string country = Trim(info.country);
+    if (!province.empty()) {
+      ++distribution.domestic_count;
+      ++province_counts[province];
+    } else if (IsChinaCountry(country)) {
+      ++distribution.domestic_count;
+    } else if (!country.empty()) {
       ++distribution.foreign_count;
-      ++country_counts[Trim(info.country)];
+      ++country_counts[country];
+    } else {
+      ++distribution.unknown_count;
     }
   }
 

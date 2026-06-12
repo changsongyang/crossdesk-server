@@ -63,8 +63,8 @@ int main() {
 
   presence.SetDeviceNetworkInfo(
       "device-1",
-      {"203.0.113.8", "Testland", "Test Region", "Test City",
-       "Test City, Test Region, Testland"});
+      {"203.0.113.8", "Testland", "Test Region", "",
+       "Test Region, Testland"});
   ClientNetworkInfo network_info;
   expect(presence.GetDeviceNetworkInfo("device-1", &network_info) &&
              network_info.client_ip == "203.0.113.8",
@@ -75,20 +75,24 @@ int main() {
          "presence tracks devices by current client ip");
   expect(presence.UpdateDevicesWithClientIp(
              "203.0.113.8",
-             {"203.0.113.8", "Sharedland", "Shared Region", "Shared City",
-              "Shared City, Shared Region, Sharedland"}) == 2,
+             {"203.0.113.8", "Sharedland", "Shared Region", "",
+              "Shared Region, Sharedland"}) == 2,
          "presence updates all current devices sharing an ip");
   expect(presence.GetDeviceNetworkInfo("device-2", &network_info) &&
-             network_info.location == "Shared City, Shared Region, Sharedland",
+             network_info.location == "Shared Region, Sharedland",
          "presence applies shared ip geo result to all matching devices");
   presence.OnLogin("web-2", "web-2", hdl);
   presence.SetDeviceNetworkInfo(
       "web-2",
       {"198.51.100.10", "China", "Zhejiang", "Hangzhou",
        "Hangzhou, Zhejiang, China"});
+  presence.OnLogin("device-country-only", "device-country-only", hdl);
+  presence.SetDeviceNetworkInfo(
+      "device-country-only",
+      {"198.51.100.11", "China", "", "", "China"});
   auto distribution = presence.GetClientGeoDistribution();
-  expect(distribution.total_count == 3 && distribution.domestic_count == 1 &&
-             distribution.foreign_count == 2,
+  expect(distribution.total_count == 4 && distribution.domestic_count == 2 &&
+             distribution.foreign_count == 2 && distribution.unknown_count == 0,
          "presence geo distribution includes current web client network info");
   expect(distribution.provinces.size() == 1 &&
              distribution.provinces[0].province == "zhejiang" &&
@@ -98,6 +102,7 @@ int main() {
              distribution.countries[0].country == "Sharedland" &&
              distribution.countries[0].count == 2,
          "presence geo distribution reports foreign country counts");
+  presence.OnLogout("device-country-only");
   presence.OnLogout("device-1");
   expect(!presence.GetDeviceNetworkInfo("device-1", &network_info),
          "presence clears current network info on logout");
@@ -107,6 +112,26 @@ int main() {
   presence.OnLogout("device-2");
   expect(!presence.HasDeviceWithClientIp("203.0.113.8"),
          "presence drops ip tracking after last matching device logs out");
+
+  const auto geo_db_path =
+      std::filesystem::temp_directory_path() /
+      ("crossdesk_geo_distribution_test_" +
+       std::to_string(std::chrono::steady_clock::now()
+                          .time_since_epoch()
+                          .count()) +
+       ".db");
+  {
+    DeviceDBManager geo_db(geo_db_path.string());
+    geo_db.SetDeviceOnline("geo-country-only", true);
+    geo_db.UpdateDeviceNetworkInfo("geo-country-only",
+                                   {"198.51.100.12", "China", "", "", "China"});
+    auto db_country_only = geo_db.GetClientGeoDistribution();
+    expect(db_country_only.total_count == 1 &&
+               db_country_only.domestic_count == 1 &&
+               db_country_only.unknown_count == 0,
+           "database geo distribution treats country-only locations as known");
+  }
+  std::filesystem::remove(geo_db_path);
 
   const auto db_path =
       std::filesystem::temp_directory_path() /
@@ -149,12 +174,12 @@ int main() {
          "Hangzhou, Zhejiang, China"});
     db.UpdateDeviceNetworkInfo(
         "web-1",
-        {"203.0.113.10", "Webland", "Web Region", "Web City",
-         "Web City, Web Region, Webland"});
+        {"203.0.113.10", "Webland", "Web Region", "",
+         "Web Region, Webland"});
     db.UpdateDeviceNetworkInfo(
         "C-000000",
-        {"203.0.113.11", "Cloneland", "Clone Region", "Clone City",
-         "Clone City, Clone Region, Cloneland"});
+        {"203.0.113.11", "Cloneland", "Clone Region", "",
+         "Clone Region, Cloneland"});
     auto db_distribution = db.GetClientGeoDistribution();
     expect(db_distribution.total_count == 2 &&
                db_distribution.domestic_count == 1 &&
