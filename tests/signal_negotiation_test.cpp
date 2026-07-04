@@ -64,6 +64,29 @@ int main() {
       expect(sent_messages[0].value("reason", "") == "Remote unavailable",
              "offline host join response reports remote unavailable");
     }
+
+    sent_messages.clear();
+    auto attacker_connection = std::make_shared<int>(2);
+    websocketpp::connection_hdl attacker_hdl(attacker_connection);
+    json login_with_wrong_password = {
+        {"type", "login"},
+        {"user_id", offline_host.device_id + "@attacker-password"},
+    };
+
+    negotiation.login_user(attacker_hdl, login_with_wrong_password);
+
+    expect(sent_messages.size() == 1,
+           "wrong device password login sends one response");
+    if (!sent_messages.empty()) {
+      expect(sent_messages[0].value("type", "") == "login",
+             "wrong device password login response has login type");
+      expect(sent_messages[0].value("status", "") == "fail",
+             "wrong device password login fails");
+    }
+    expect(db.VerifyDevice(offline_host.device_id, offline_host.password) == 0,
+           "wrong device password login does not replace original password");
+    expect(db.VerifyDevice(offline_host.device_id, "attacker-password") != 0,
+           "wrong device password is not accepted after failed login");
   }
 
   std::filesystem::remove(db_path);
