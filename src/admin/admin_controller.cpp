@@ -121,7 +121,7 @@ size_t QuerySizeParam(const std::map<std::string, std::string>& params,
   if (!ParseSize(it->second, &value)) {
     return fallback;
   }
-  return std::min(value, max_value);
+  return (std::min)(value, max_value);
 }
 
 std::string QueryStringParam(const std::map<std::string, std::string>& params,
@@ -224,7 +224,7 @@ void ApplyDevicePage(std::vector<OnlineDeviceInfo>* devices, size_t offset,
   }
 
   const size_t available = devices->size() - offset;
-  const size_t count = std::min(limit, available);
+  const size_t count = (std::min)(limit, available);
   std::vector<OnlineDeviceInfo> page(devices->begin() + offset,
                                      devices->begin() + offset + count);
   devices->swap(page);
@@ -754,7 +754,7 @@ AdminHttpResponse AdminController::HandleDisconnect(
   bool persisted = false;
   if (db_) {
     for (const auto& session : db_->ListRemoteControlSessions(
-             static_cast<size_t>(std::numeric_limits<int>::max()), 0,
+             static_cast<size_t>((std::numeric_limits<int>::max)()), 0,
              transmission_id)) {
       if (session.transmission_id == transmission_id) {
         persisted = true;
@@ -788,7 +788,7 @@ nlohmann::json AdminController::BuildStats(size_t online_device_fallback) const 
   size_t active_connection_count =
       transmission_ ? transmission_->GetActiveConnectionCount() : 0;
   if (db_) {
-    active_connection_count = std::max(
+    active_connection_count = (std::max)(
         active_connection_count,
         static_cast<size_t>(db_->CountActiveRemoteControlConnections()));
   }

@@ -238,6 +238,22 @@ bool SignalNegotiation::join_transmission(websocketpp::connection_hdl hdl,
   int ret = device_db_manager_->VerifyDevice(transmission_id, password);
 
   if (0 == ret) {
+    std::string host_id =
+        transmission_manager_->GetHostIdOfTransmission(transmission_id);
+    websocketpp::connection_hdl host_hdl =
+        transmission_manager_->GetWsHandle(host_id);
+
+    if (host_id.empty() || host_hdl.expired()) {
+      LOG_WARN("Remote [{}] is unavailable, cannot join transmission",
+               transmission_id.c_str());
+      json message = {{"type", "user_join_transmission"},
+                      {"transmission_id", transmission_id},
+                      {"status", "failed"},
+                      {"reason", "Remote unavailable"}};
+      send_msg_(hdl, message);
+      return true;
+    }
+
     transmission_manager_->BindGuestToTransmission(user_id, transmission_id);
 
     json message = {{"type", "user_join_transmission"},
@@ -245,12 +261,7 @@ bool SignalNegotiation::join_transmission(websocketpp::connection_hdl hdl,
                     {"user_id", user_id},
                     {"status", "success"}};
 
-    std::string host_id =
-        transmission_manager_->GetHostIdOfTransmission(transmission_id);
-
-    if (!host_id.empty()) {
-      send_msg_(transmission_manager_->GetWsHandle(host_id), message);
-    }
+    send_msg_(host_hdl, message);
   } else if (-1 == ret) {
     LOG_ERROR("Password incorrect for transmission id [{}]",
               transmission_id.c_str());

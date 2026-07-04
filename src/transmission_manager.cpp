@@ -147,7 +147,7 @@ std::vector<std::string> TransmissionManager::GetAllUserIdOfTransmission(
 
 std::vector<TransmissionSnapshot> TransmissionManager::GetTransmissionSnapshots() {
   size_t ignored_count = 0;
-  return GetTransmissionSnapshots(std::numeric_limits<size_t>::max(), 0, "",
+  return GetTransmissionSnapshots((std::numeric_limits<size_t>::max)(), 0, "",
                                   &ignored_count);
 }
 
@@ -157,7 +157,7 @@ std::vector<TransmissionSnapshot> TransmissionManager::GetTransmissionSnapshots(
   std::lock_guard<std::recursive_mutex> lock(ws_hdl_alive_checker_mutex_);
   std::vector<TransmissionSnapshot> result;
   if (limit > 0) {
-    result.reserve(std::min(limit, transmission_host_id_list_.size()));
+    result.reserve((std::min)(limit, transmission_host_id_list_.size()));
   }
 
   size_t matched_count = 0;

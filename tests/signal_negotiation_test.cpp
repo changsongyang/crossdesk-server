@@ -1,0 +1,77 @@
+#include "signal_negotiation.h"
+
+#include <chrono>
+#include <filesystem>
+#include <iostream>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "device_db_manager.h"
+#include "transmission_manager.h"
+
+int main() {
+  int failures = 0;
+
+  auto expect = [&failures](bool condition, const std::string& message) {
+    if (!condition) {
+      std::cerr << "FAIL: " << message << std::endl;
+      ++failures;
+    }
+  };
+
+  const auto db_path =
+      std::filesystem::temp_directory_path() /
+      ("crossdesk_signal_negotiation_test_" +
+       std::to_string(std::chrono::steady_clock::now()
+                          .time_since_epoch()
+                          .count()) +
+       ".db");
+
+  {
+    DeviceDBManager db(db_path.string());
+    DeviceCredential offline_host = db.AddDevice("", "");
+    expect(!offline_host.device_id.empty(), "test host device is registered");
+    expect(!offline_host.password.empty(), "test host password is registered");
+
+    auto transmission = std::make_shared<TransmissionManager>();
+    SignalNegotiation negotiation(transmission, &db);
+
+    std::vector<json> sent_messages;
+    auto requester_connection = std::make_shared<int>(1);
+    websocketpp::connection_hdl requester_hdl(requester_connection);
+    negotiation.SetSendMsgCallback(
+        [&](websocketpp::connection_hdl, json message) {
+          sent_messages.push_back(message);
+        });
+
+    json request = {
+        {"type", "join_transmission"},
+        {"user_id", "C-controller"},
+        {"transmission_id", offline_host.device_id + "@" +
+                                offline_host.password},
+    };
+
+    negotiation.join_transmission(requester_hdl, request);
+
+    expect(sent_messages.size() == 1,
+           "offline host join sends one failure response to requester");
+    if (!sent_messages.empty()) {
+      expect(sent_messages[0].value("type", "") == "user_join_transmission",
+             "offline host join response has user_join_transmission type");
+      expect(sent_messages[0].value("status", "") == "failed",
+             "offline host join response fails");
+      expect(sent_messages[0].value("reason", "") == "Remote unavailable",
+             "offline host join response reports remote unavailable");
+    }
+  }
+
+  std::filesystem::remove(db_path);
+
+  if (failures > 0) {
+    std::cerr << failures << " failure(s)" << std::endl;
+    return 1;
+  }
+
+  return 0;
+}

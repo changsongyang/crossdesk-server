@@ -87,6 +87,13 @@ target("transmission_manager_test")
     add_files("tests/transmission_manager_test.cpp")
     add_includedirs("src", "src/log")
 
+target("signal_negotiation_test")
+    set_kind("binary")
+    set_default(false)
+    add_deps("negotiation")
+    add_files("tests/signal_negotiation_test.cpp")
+    add_includedirs("src", "src/device_db_manager", "src/log")
+
 target("admin_auth_test")
     set_kind("binary")
     set_default(false)
