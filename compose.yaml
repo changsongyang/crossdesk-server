@@ -45,6 +45,11 @@ services:
     network_mode: host
     restart: unless-stopped
     user: "0:0"
+    # The image entrypoint expands arguments through `eval echo`; that turns the
+    # required short option `-n` into an empty argument (`echo -n`). Execute
+    # turnserver directly so the command array is passed through unchanged.
+    entrypoint:
+      - turnserver
     depends_on:
       crossdesk-server:
         condition: service_healthy
@@ -69,7 +74,7 @@ services:
       - --log-file=stdout
       - "--log-min-level=${COTURN_LOG_LEVEL:-warning}"
       - --new-log-timestamp
-      - --no-cli
+      - --cli=false
       - --no-multicast-peers
       - --proc-user=nobody
       - --proc-group=nogroup
