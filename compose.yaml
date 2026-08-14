@@ -40,7 +40,7 @@ services:
         max-file: "3"
 
   coturn:
-    image: "${COTURN_IMAGE:-coturn/coturn:4.17.0-r0-debian@sha256:7df59bcd84800c3978da2dd0d7fb17a8179e77a8bf667f678813120a9f18b094}"
+    image: "${COTURN_IMAGE:-coturn/coturn:4.17.2-r0-debian@sha256:aa68aab64a3b929d57fc2924c98ea447bf996cf8dade2508e7b71eaf23f1f14e}"
     container_name: crossdesk_coturn
     network_mode: host
     restart: unless-stopped

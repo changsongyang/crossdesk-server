@@ -50,10 +50,6 @@ For more information, please refer to the [official Xmake documentation](https:/
 sudo docker build -f docker/dockerfile -t image-name .
 ```
 
-Coturn now runs in a separate container. `compose.yaml` pins the official image `coturn/coturn:4.17.0-r0-debian` by digest so the tag cannot drift.
-
-Coturn 4.17.0 enables stateless nonces by default. Compose also keeps the nonce secret stable and passes `--dtls` explicitly because DTLS became opt-in in this release.
-
 ## Run Services
 
 ### Use Published Images (Recommended for Servers)
@@ -87,6 +83,39 @@ Compose starts two independent containers:
 
 - `crossdesk_server` runs CrossDesk Server and generates the shared certificates on first startup.
 - `crossdesk_coturn` runs the pinned official Coturn image after the certificates are ready, and can be upgraded, restarted, and resource-limited independently.
+
+### Container Management Commands
+
+Run the following commands from the directory containing `compose.yaml`. Compose reads `.env` from the same directory by default:
+
+```bash
+# Start all containers.
+sudo docker compose up -d
+
+# Show container status.
+sudo docker compose ps
+
+# Stop all containers while keeping them available for a later start.
+sudo docker compose stop
+
+# Restart all containers.
+sudo docker compose restart
+
+# Pull the images selected in .env and recreate containers whose images changed.
+sudo docker compose pull
+sudo docker compose up -d
+```
+
+`docker compose restart` does not apply changes from `.env` or `compose.yaml`. Run `docker compose up -d` after changing configuration or image versions.
+
+If the files are stored elsewhere, specify their paths explicitly. For example:
+
+```bash
+sudo docker compose \
+  -f /path/to/compose.yaml \
+  --env-file /root/workspace/server_config/.env \
+  up -d
+```
 
 **Parameters**
 

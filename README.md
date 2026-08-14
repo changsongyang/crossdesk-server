@@ -52,10 +52,6 @@ xmake b -vy crossdesk_server
 sudo docker build -f docker/dockerfile -t image-name .
 ```
 
-Coturn 已拆分为独立容器，由 `compose.yaml` 使用官方固定版本镜像 `coturn/coturn:4.17.0-r0-debian` 启动，并通过镜像 digest 防止标签漂移。
-
-Coturn 4.17.0 默认启用无状态 nonce；Compose 还固定 nonce secret，并显式传入 `--dtls`，以兼容该版本将 DTLS 改为按需启用的行为。
-
 ## 运行服务
 
 ### 使用已发布镜像（服务器推荐）
@@ -89,6 +85,39 @@ Compose 会启动两个相互独立的容器：
 
 - `crossdesk_server`：只运行 CrossDesk Server，并负责首次生成共享证书。
 - `crossdesk_coturn`：运行官方固定 Coturn 镜像，等待证书生成后启动；可独立升级、重启和限制资源。
+
+### 容器管理命令
+
+以下命令应在 `compose.yaml` 所在目录执行，Compose 默认读取同目录下的 `.env`：
+
+```bash
+# 启动全部容器
+sudo docker compose up -d
+
+# 查看容器状态
+sudo docker compose ps
+
+# 停止全部容器（保留容器，可再次启动）
+sudo docker compose stop
+
+# 重启全部容器
+sudo docker compose restart
+
+# 拉取 .env 中指定的镜像，并重新创建有更新的容器
+sudo docker compose pull
+sudo docker compose up -d
+```
+
+`docker compose restart` 不会应用 `.env` 或 `compose.yaml` 的修改；配置或镜像版本发生变化后，应执行 `docker compose up -d`。
+
+如果两个文件不在当前目录，请显式指定路径，例如：
+
+```bash
+sudo docker compose \
+  -f /path/to/compose.yaml \
+  --env-file /root/workspace/server_config/.env \
+  up -d
+```
 
 **参数**
 
