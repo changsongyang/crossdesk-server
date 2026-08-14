@@ -44,63 +44,104 @@ xmake b -vy crossdesk_server
 For more information, please refer to the [official Xmake documentation](https://xmake.io/guide/quick-start.html) .
 
 ## Build Docker Image
-```
-cd docker
 
-sudo docker build -t image-name .
-```
-
-## Run Container
-
-### Startup Command
-```
-sudo docker run -d \
-  --name crossdesk_server \
-  --network host \
-  -e EXTERNAL_IP=xxx.xxx.xxx.xxx \
-  -e INTERNAL_IP=xxx.xxx.xxx.xxx \
-  -e CROSSDESK_SERVER_PORT=xxxx \
-  -e COTURN_PORT=xxxx \
-  -e MIN_PORT=xxxxx \
-  -e MAX_PORT=xxxxx \
-  -v /var/lib/crossdesk:/var/lib/crossdesk \
-  -v /var/log/crossdesk:/var/log/crossdesk \
-  crossdesk/crossdesk-server:v1.1.3
+```bash
+# Run from the repository root. This image contains CrossDesk Server only.
+sudo docker build -f docker/dockerfile -t image-name .
 ```
 
-The parameters you need to pay attention to are as follows:
+Coturn now runs in a separate container. `compose.yaml` pins the official image `coturn/coturn:4.17.0-r0-debian` by digest so the tag cannot drift.
+
+Coturn 4.17.0 enables stateless nonces by default. Compose also keeps the nonce secret stable and passes `--dtls` explicitly because DTLS became opt-in in this release.
+
+## Run Services
+
+### Use Published Images (Recommended for Servers)
+
+Download `compose.yaml` and `env.example` from the GitHub Release. The released `env.example` pins `CROSSDESK_IMAGE` to that release tag:
+
+```bash
+cp env.example .env
+
+# Set the public/private IPs, ports, and TURN credentials.
+vi .env
+
+sudo docker compose pull
+sudo docker compose up -d
+sudo docker compose ps
+```
+
+When using `.env.example` from the repository, change `CROSSDESK_IMAGE` from `latest` to the exact release tag intended for production.
+
+### Build from Local Source
+
+Build the binary as described above, place it at `dist/crossdesk_server`, and then run:
+
+```bash
+cp .env.example .env
+vi .env
+sudo docker compose up -d --build
+```
+
+Compose starts two independent containers:
+
+- `crossdesk_server` runs CrossDesk Server and generates the shared certificates on first startup.
+- `crossdesk_coturn` runs the pinned official Coturn image after the certificates are ready, and can be upgraded, restarted, and resource-limited independently.
 
 **Parameters**
+
 - **EXTERNAL_IP**: The server’s public IP. This corresponds to **Server Address** in the CrossDesk client’s **Self-Hosted Server Configuration**.
 - **INTERNAL_IP**: The server’s internal IP.
 - **CROSSDESK_SERVER_PORT**: The port used by the self-hosted service. This corresponds to **Server Port** in the CrossDesk client’s **Self-Hosted Server Configuration**.
 - **COTURN_PORT**: The port used by the COTURN service. This corresponds to **Relay Service Port** in the CrossDesk client’s **Self-Hosted Server Configuration**.
 - **MIN_PORT / MAX_PORT**: The port range used by the COTURN service. Example: `MIN_PORT=50000`, `MAX_PORT=60000`. Adjust the range depending on the number of clients.
-- `-v /var/lib/crossdesk:/var/lib/crossdesk`: Persists database and certificate files on the host machine.
-- `-v /var/log/crossdesk:/var/log/crossdesk`: Persists log files on the host machine.
+- **COTURN_USERNAME / COTURN_PASSWORD**: TURN long-term credentials; they must match the client configuration.
+- **COTURN_STATELESS_NONCE_SECRET**: Generate it with `openssl rand -hex 32` and keep it stable so Coturn restarts do not force every client through an extra 438 re-authentication round trip.
+- **COTURN_LOG_LEVEL**: Defaults to `warning` to avoid per-request debug logging.
+- **COTURN_MEMORY_LIMIT**: Coturn container memory limit; defaults to `512m` and can be adjusted for expected concurrency.
+- **CROSSDESK_DATA_DIR / CROSSDESK_LOG_DIR**: Host directories for persistent data, certificates, and CrossDesk logs.
 
-**Example**:
-```bash
-sudo docker run -d \
-  --name crossdesk_server \
-  --network host \
-  -e EXTERNAL_IP=114.114.114.114 \
-  -e INTERNAL_IP=10.0.0.1 \
-  -e CROSSDESK_SERVER_PORT=9099 \
-  -e COTURN_PORT=3478 \
-  -e MIN_PORT=50000 \
-  -e MAX_PORT=60000 \
-  -v /var/lib/crossdesk:/var/lib/crossdesk \
-  -v /var/log/crossdesk:/var/log/crossdesk \
-  crossdesk/crossdesk-server:v1.1.3
+### Logging Mode (Default: Hybrid)
+
+Compose uses a hybrid logging model by default:
+
+- CrossDesk business logs continue to be written under `/var/log/crossdesk/` and are persisted to the host through `CROSSDESK_LOG_DIR` for backup, download, and application troubleshooting.
+- Coturn runtime logs go only to stdout. Docker rotates them with `max-size=50m` and `max-file=3`, retaining approximately 150 MB at most so abnormal public traffic cannot grow the log indefinitely.
+- Coturn no longer creates `/var/log/crossdesk/turn.log`, avoiding duplicate copies in both a log file and Docker's container log.
+
+When migrating from the previous `docker run` deployment and retaining `/root/workspace/server_config`, set the following in `.env`:
+
+```dotenv
+CROSSDESK_DATA_DIR=/root/workspace/server_config
+CROSSDESK_LOG_DIR=/root/workspace/server_config/logs
 ```
 
+This reuses the existing `certs`, `db`, and CrossDesk log directories. Coturn's high-volume runtime log remains bounded and rotated by Docker instead of being written there.
+
+View or export Coturn logs with:
+
+```bash
+# Follow the most recent 200 lines.
+sudo docker logs -f --tail 200 crossdesk_coturn
+
+# Show the last hour.
+sudo docker logs --since 1h crossdesk_coturn
+
+# Export an incident to the persistent log directory when needed.
+sudo docker logs --since 1h crossdesk_coturn \
+  > /root/workspace/server_config/logs/coturn-export.log 2>&1
+```
+
+Docker removes the Coturn container log when the container is deleted. Export incident logs before removal when long-term retention is required, or forward them to a centralized logging system.
+
 **Notes**
+
 - **The server must open the following ports: COTURN_PORT/udp, COTURN_PORT/tcp, MIN_PORT–MAX_PORT/udp, and CROSSDESK_SERVER_PORT/tcp.**
-- If you don’t mount volumes, all data will be lost when the container is removed.
+- Coturn uses `EXTERNAL_IP/INTERNAL_IP` mapping for cloud servers behind public NAT.
+- Docker stdout/stderr logs for both containers are limited to three 50 MB files.
 - Certificate files will be automatically generated on first startup and persisted to the host at `/var/lib/crossdesk/certs`.
 - The database file will be automatically created and stored at `/var/lib/crossdesk/db/crossdesk-server.db`.
-- Log files will be created and stored at `/var/log/crossdesk/`.
+- CrossDesk business logs are persisted under `/var/log/crossdesk/`; view rotating Coturn logs with `docker logs crossdesk_coturn`.
 
 **Permission Notice**
 If the directories automatically created by Docker belong to root and have insufficient write permissions, the container user may not be able to write to them. This can cause:
@@ -176,23 +217,17 @@ ADMIN_USERNAME=admin
 ADMIN_PASSWORD=change-this-password
 ```
 
-Docker example:
+Compose example: set the following values in `.env`:
+
+```dotenv
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=change-this-password
+```
+
+Then apply the configuration:
 
 ```bash
-sudo docker run -d \
-  --name crossdesk_server \
-  --network host \
-  -e EXTERNAL_IP=114.114.114.114 \
-  -e INTERNAL_IP=10.0.0.1 \
-  -e CROSSDESK_SERVER_PORT=9099 \
-  -e COTURN_PORT=3478 \
-  -e MIN_PORT=50000 \
-  -e MAX_PORT=60000 \
-  -e ADMIN_USERNAME=admin \
-  -e ADMIN_PASSWORD=change-this-password \
-  -v /var/lib/crossdesk:/var/lib/crossdesk \
-  -v /var/log/crossdesk:/var/log/crossdesk \
-  crossdesk/crossdesk-server:v1.1.3
+sudo docker compose up -d
 ```
 
 After startup, open:

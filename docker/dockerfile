@@ -4,23 +4,14 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        coturn \
+        ca-certificates \
+        libsqlite3-0 \
+        libstdc++6 \
         openssl && \
-    apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Generate coturn certificates and set permissions in one layer
-RUN mkdir -p /opt/turnserver && \
-    cd /opt/turnserver && \
-    openssl genrsa -out turn_server_pkey.pem 2048 && \
-    openssl req -x509 -new -nodes \
-      -key turn_server_pkey.pem \
-      -sha256 -days 3650 \
-      -subj "/C=CN/ST=Beijing/L=Beijing/O=SelfSigned/OU=IT/CN=coturn.local" \
-      -out turn_server_cert.pem && \
-    chmod 600 /opt/turnserver/turn_server_pkey.pem
-
-# Copy runtime files and prebuilt binary from CI workspace
+# Coturn runs in a separate, pinned official container.
+# This image contains only CrossDesk Server and its certificate helper.
 COPY --chmod=755 docker/start.sh /start.sh
 COPY --chmod=755 docker/generate_certs.sh /docker/generate_certs.sh
 COPY --chmod=755 dist/crossdesk_server /crossdesk-server/crossdesk_server

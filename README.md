@@ -46,63 +46,104 @@ xmake b -vy crossdesk_server
 更多使用方法可参考 [Xmake官方文档](https://xmake.io/guide/quick-start.html) 。
 
 ## 构建镜像
-```
-cd docker
 
-sudo docker build -t image-name .
-```
-
-## 运行容器
-
-### 启动命令
 ```bash
-sudo docker run -d \
-  --name crossdesk_server \
-  --network host \
-  -e EXTERNAL_IP=xxx.xxx.xxx.xxx \
-  -e INTERNAL_IP=xxx.xxx.xxx.xxx \
-  -e CROSSDESK_SERVER_PORT=xxxx \
-  -e COTURN_PORT=xxxx \
-  -e MIN_PORT=xxxxx \
-  -e MAX_PORT=xxxxx \
-  -v /var/lib/crossdesk:/var/lib/crossdesk \
-  -v /var/log/crossdesk:/var/log/crossdesk \
-  crossdesk/crossdesk-server:v1.1.3
+# 在仓库根目录执行；该镜像只包含 CrossDesk Server
+sudo docker build -f docker/dockerfile -t image-name .
 ```
 
-上述命令中，用户需注意的参数如下：
+Coturn 已拆分为独立容器，由 `compose.yaml` 使用官方固定版本镜像 `coturn/coturn:4.17.0-r0-debian` 启动，并通过镜像 digest 防止标签漂移。
+
+Coturn 4.17.0 默认启用无状态 nonce；Compose 还固定 nonce secret，并显式传入 `--dtls`，以兼容该版本将 DTLS 改为按需启用的行为。
+
+## 运行服务
+
+### 使用已发布镜像（服务器推荐）
+
+从 GitHub Release 下载 `compose.yaml` 和 `env.example`。Release 中的 `env.example` 已将 `CROSSDESK_IMAGE` 固定为对应的发布 tag：
+
+```bash
+cp env.example .env
+
+# 编辑公网 IP、内网 IP、端口和 TURN 凭据
+vi .env
+
+sudo docker compose pull
+sudo docker compose up -d
+sudo docker compose ps
+```
+
+如果使用仓库中的 `.env.example`，建议将 `CROSSDESK_IMAGE` 从 `latest` 改为需要部署的固定版本 tag。
+
+### 从本地源码构建
+
+先按照上文编译并将可执行文件放到 `dist/crossdesk_server`，然后执行：
+
+```bash
+cp .env.example .env
+vi .env
+sudo docker compose up -d --build
+```
+
+Compose 会启动两个相互独立的容器：
+
+- `crossdesk_server`：只运行 CrossDesk Server，并负责首次生成共享证书。
+- `crossdesk_coturn`：运行官方固定 Coturn 镜像，等待证书生成后启动；可独立升级、重启和限制资源。
 
 **参数**
+
 - EXTERNAL_IP：服务器公网 IP , 对应 CrossDesk 客户端**自托管服务器配置**中填写的**服务器地址**
 - INTERNAL_IP：服务器内网 IP
 - CROSSDESK_SERVER_PORT：自托管服务使用的端口，对应 CrossDesk 客户端**自托管服务器配置**中填写的**服务器端口**
 - COTURN_PORT: COTURN 服务使用的端口, 对应 CrossDesk 客户端**自托管服务器配置**中填写的**中继服务端口**
 - MIN_PORT/MAX_PORT：COTURN 服务使用的端口范围，例如：MIN_PORT=50000, MAX_PORT=60000，范围可根据客户端数量调整。
-- `-v /var/lib/crossdesk:/var/lib/crossdesk`：持久化数据库和证书文件到宿主机
-- `-v /var/log/crossdesk:/var/log/crossdesk`：持久化日志文件到宿主机
+- COTURN_USERNAME/COTURN_PASSWORD：TURN 长期凭据，必须与客户端配置一致。
+- COTURN_STATELESS_NONCE_SECRET：使用 `openssl rand -hex 32` 生成并保持不变，避免 Coturn 重启后所有客户端因 nonce 密钥变化触发额外的 438 重认证。
+- COTURN_LOG_LEVEL：默认 `warning`，避免按请求打印调试日志。
+- COTURN_MEMORY_LIMIT：Coturn 容器内存上限，默认 `512m`，可按并发量调整。
+- CROSSDESK_DATA_DIR/CROSSDESK_LOG_DIR：宿主机上的数据、证书和日志目录。
 
-**示例**：
-```bash
-sudo docker run -d \
-  --name crossdesk_server \
-  --network host \
-  -e EXTERNAL_IP=114.114.114.114 \
-  -e INTERNAL_IP=10.0.0.1 \
-  -e CROSSDESK_SERVER_PORT=9099 \
-  -e COTURN_PORT=3478 \
-  -e MIN_PORT=50000 \
-  -e MAX_PORT=60000 \
-  -v /var/lib/crossdesk:/var/lib/crossdesk \
-  -v /var/log/crossdesk:/var/log/crossdesk \
-  crossdesk/crossdesk-server:v1.1.3
+### 日志模式（默认：混合模式）
+
+Compose 默认采用混合日志模式：
+
+- CrossDesk 业务日志继续写入 `/var/log/crossdesk/`，并通过 `CROSSDESK_LOG_DIR` 持久化到宿主机，便于备份、下载和业务排查。
+- Coturn 运行日志只写标准输出，由 Docker 按 `max-size=50m`、`max-file=3` 自动轮转，最多保留约 150 MB，防止公网异常流量造成日志无限增长。
+- Coturn 不再创建 `/var/log/crossdesk/turn.log`，避免同一批日志同时写入文件和 Docker 日志。
+
+如果从旧的 `docker run` 部署迁移，并希望继续使用 `/root/workspace/server_config`，可在 `.env` 中设置：
+
+```dotenv
+CROSSDESK_DATA_DIR=/root/workspace/server_config
+CROSSDESK_LOG_DIR=/root/workspace/server_config/logs
 ```
 
+这样原有的 `certs`、`db` 和 CrossDesk 日志目录都可以继续使用。Coturn 的高频运行日志仍由 Docker 限量轮转，不再写入该目录。
+
+查看或导出 Coturn 日志：
+
+```bash
+# 持续查看最近 200 行
+sudo docker logs -f --tail 200 crossdesk_coturn
+
+# 查看最近一小时
+sudo docker logs --since 1h crossdesk_coturn
+
+# 需要保留某次事件时，手动导出到持久化日志目录
+sudo docker logs --since 1h crossdesk_coturn \
+  > /root/workspace/server_config/logs/coturn-export.log 2>&1
+```
+
+Coturn 的 Docker 日志会在删除容器时一起删除；需要长期留存的事件日志应在删除容器前导出，或接入集中日志系统。
+
 **注意**：
+
 - **服务器需开放端口：COTURN_PORT/udp，COTURN_PORT/tcp，MIN_PORT-MAX_PORT/udp，CROSSDESK_SERVER_PORT/tcp。**
-- 如果不挂载 volume，容器删除后数据会丢失
+- Coturn 使用 `EXTERNAL_IP/INTERNAL_IP` 映射，适用于云服务器公网 NAT 场景。
+- 两个容器的 Docker stdout/stderr 日志均限制为最多 3 个 50 MB 文件。
 - 证书文件会在首次启动时自动生成并持久化到宿主机的 `/var/lib/crossdesk/certs` 路径下
 - 数据库文件会自动创建并持久化到宿主机的 `/var/lib/crossdesk/db/crossdesk-server.db` 路径下
-- 日志文件会自动创建并持久化到宿主机的 `/var/log/crossdesk/` 路径下
+- CrossDesk 业务日志持久化到 `/var/log/crossdesk/`；Coturn 日志通过 `docker logs crossdesk_coturn` 查看并自动轮转。
 
 **权限注意**：如果 Docker 自动创建的目录权限不足（属于 root），容器内用户无法写入，会导致：
   - 证书生成失败，容器启动脚本会报错退出
@@ -176,23 +217,17 @@ ADMIN_USERNAME=admin
 ADMIN_PASSWORD=change-this-password
 ```
 
-Docker 示例：
+Compose 示例：在 `.env` 中设置：
+
+```dotenv
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=change-this-password
+```
+
+然后应用配置：
 
 ```bash
-sudo docker run -d \
-  --name crossdesk_server \
-  --network host \
-  -e EXTERNAL_IP=114.114.114.114 \
-  -e INTERNAL_IP=10.0.0.1 \
-  -e CROSSDESK_SERVER_PORT=9099 \
-  -e COTURN_PORT=3478 \
-  -e MIN_PORT=50000 \
-  -e MAX_PORT=60000 \
-  -e ADMIN_USERNAME=admin \
-  -e ADMIN_PASSWORD=change-this-password \
-  -v /var/lib/crossdesk:/var/lib/crossdesk \
-  -v /var/log/crossdesk:/var/log/crossdesk \
-  crossdesk/crossdesk-server:v1.1.3
+sudo docker compose up -d
 ```
 
 启动后打开：

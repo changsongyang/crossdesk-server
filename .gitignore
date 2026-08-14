@@ -2,6 +2,8 @@
 .xmake/
 build/
 cert/
+.env
+/logs/
 
 # MacOS Cache
 .DS_Store

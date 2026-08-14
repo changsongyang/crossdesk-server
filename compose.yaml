@@ -1,0 +1,86 @@
+services:
+  crossdesk-server:
+    build:
+      context: .
+      dockerfile: docker/dockerfile
+    image: "${CROSSDESK_IMAGE:-crossdesk/crossdesk-server:latest}"
+    container_name: crossdesk_server
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      EXTERNAL_IP: "${EXTERNAL_IP:?Set EXTERNAL_IP in .env}"
+      CROSSDESK_SERVER_PORT: "${CROSSDESK_SERVER_PORT:-9099}"
+      ADMIN_USERNAME: "${ADMIN_USERNAME:-}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
+      CROSSDESK_GEOIP_LOOKUP: "${CROSSDESK_GEOIP_LOOKUP:-0}"
+      CROSSDESK_GEOIP_KEY: "${CROSSDESK_GEOIP_KEY:-}"
+      CROSSDESK_GEOIP_SCHEME: "${CROSSDESK_GEOIP_SCHEME:-https}"
+      CROSSDESK_GEOIP_HOST: "${CROSSDESK_GEOIP_HOST:-api.ip2location.io}"
+      CROSSDESK_GEOIP_PORT: "${CROSSDESK_GEOIP_PORT:-443}"
+      # An empty value makes CrossDesk use its built-in /?key={key}&ip={ip} template.
+      CROSSDESK_GEOIP_PATH: "${CROSSDESK_GEOIP_PATH:-}"
+      CROSSDESK_GEOIP_TIMEOUT_MS: "${CROSSDESK_GEOIP_TIMEOUT_MS:-1200}"
+      CROSSDESK_GEOIP_FAILURE_TTL_MS: "${CROSSDESK_GEOIP_FAILURE_TTL_MS:-60000}"
+      CROSSDESK_GEOIP_FAILURE_MAX_TTL_MS: "${CROSSDESK_GEOIP_FAILURE_MAX_TTL_MS:-1800000}"
+    volumes:
+      - "${CROSSDESK_DATA_DIR:-/var/lib/crossdesk}:/var/lib/crossdesk"
+      - "${CROSSDESK_LOG_DIR:-/var/log/crossdesk}:/var/log/crossdesk"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - test -s /var/lib/crossdesk/certs/api.crossdesk.cn.key && test -s /var/lib/crossdesk/certs/api.crossdesk.cn_bundle.crt
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  coturn:
+    image: "${COTURN_IMAGE:-coturn/coturn:4.17.0-r0-debian@sha256:7df59bcd84800c3978da2dd0d7fb17a8179e77a8bf667f678813120a9f18b094}"
+    container_name: crossdesk_coturn
+    network_mode: host
+    restart: unless-stopped
+    user: "0:0"
+    depends_on:
+      crossdesk-server:
+        condition: service_healthy
+    volumes:
+      - "${CROSSDESK_DATA_DIR:-/var/lib/crossdesk}/certs:/certs:ro"
+    command:
+      - -n
+      - "--listening-port=${COTURN_PORT:-3478}"
+      - "--listening-ip=${INTERNAL_IP:?Set INTERNAL_IP in .env}"
+      - "--relay-ip=${INTERNAL_IP:?Set INTERNAL_IP in .env}"
+      - "--external-ip=${EXTERNAL_IP:?Set EXTERNAL_IP in .env}/${INTERNAL_IP:?Set INTERNAL_IP in .env}"
+      - "--min-port=${MIN_PORT:-50000}"
+      - "--max-port=${MAX_PORT:-60000}"
+      - --fingerprint
+      - --lt-cred-mech
+      - --dtls
+      - "--user=${COTURN_USERNAME:-crossdesk}:${COTURN_PASSWORD:-crossdeskpw}"
+      - "--realm=${COTURN_REALM:-crossdesk}"
+      - "--stateless-nonce-secret=${COTURN_STATELESS_NONCE_SECRET:?Set COTURN_STATELESS_NONCE_SECRET in .env}"
+      - --cert=/certs/api.crossdesk.cn_bundle.crt
+      - --pkey=/certs/api.crossdesk.cn.key
+      - --log-file=stdout
+      - "--log-min-level=${COTURN_LOG_LEVEL:-warning}"
+      - --new-log-timestamp
+      - --no-cli
+      - --no-multicast-peers
+      - --proc-user=nobody
+      - --proc-group=nogroup
+    mem_limit: "${COTURN_MEMORY_LIMIT:-512m}"
+    pids_limit: 256
+    ulimits:
+      nofile:
+        soft: 524288
+        hard: 524288
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"

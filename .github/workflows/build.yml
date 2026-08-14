@@ -13,6 +13,21 @@ permissions:
   contents: write
 
 jobs:
+  validate-deployment:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Validate shell scripts and Compose configuration
+        shell: bash
+        env:
+          COTURN_STATELESS_NONCE_SECRET: ci-validation-only-not-for-production
+        run: |
+          bash -n docker/start.sh docker/generate_certs.sh
+          docker compose --env-file .env.example config --quiet
+
   build:
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -73,9 +88,43 @@ jobs:
           path: ./dist/${{ matrix.artifact_name }}
           compression-level: 0
 
+  docker-build-check:
+    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+    needs: [validate-deployment, build]
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Download amd64 binary artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: crossdesk_server-linux-amd64
+          path: dist
+
+      - name: Prepare runtime binary path
+        shell: bash
+        run: |
+          mv ./dist/crossdesk_server-linux-amd64 ./dist/crossdesk_server
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Validate CrossDesk Docker image build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/dockerfile
+          platforms: linux/amd64
+          push: false
+          tags: crossdesk/crossdesk-server:ci
+          cache-from: type=gha,scope=crossdesk-server-amd64
+          cache-to: type=gha,scope=crossdesk-server-amd64,mode=max
+
   docker-release:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: build
+    needs: [validate-deployment, build]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -163,6 +212,9 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
       - name: Download release artifacts
         uses: actions/download-artifact@v4
         with:
@@ -170,10 +222,23 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Prepare deployment assets
+        shell: bash
+        env:
+          CROSSDESK_IMAGE_REPOSITORY: ${{ secrets.DOCKERHUB_USERNAME }}/crossdesk-server
+        run: |
+          cp compose.yaml dist/compose.yaml
+          sed \
+            "s|^CROSSDESK_IMAGE=.*|CROSSDESK_IMAGE=${CROSSDESK_IMAGE_REPOSITORY}:${GITHUB_REF_NAME}|" \
+            .env.example > dist/env.example
+          grep -F "CROSSDESK_IMAGE=${CROSSDESK_IMAGE_REPOSITORY}:${GITHUB_REF_NAME}" dist/env.example
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/crossdesk_server-linux-amd64
             dist/crossdesk_server-linux-arm64
+            dist/compose.yaml
+            dist/env.example
           generate_release_notes: true

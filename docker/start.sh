@@ -1,11 +1,6 @@
 #!/bin/bash
 set -e
 
-# environment variables for coturn
-CONF_FILE=/etc/coturn/turnserver.conf
-CERT_FILE=/opt/turnserver/turn_server_cert.pem
-PKEY_FILE=/opt/turnserver/turn_server_pkey.pem
-
 # environment variables for crossdesk-server
 CROSSDESK_SERVER_PORT=${CROSSDESK_SERVER_PORT:-9090}
 # Optional admin dashboard environment variables:
@@ -18,36 +13,19 @@ is_uint() {
 }
 
 # check environment variables
-if [ -z "$EXTERNAL_IP" ] || [ -z "$INTERNAL_IP" ]; then
-  echo "Error: EXTERNAL_IP and INTERNAL_IP must be set."
-  echo "Example: docker run -e EXTERNAL_IP=1.2.3.4 -e INTERNAL_IP=10.0.0.5 crossdesk-server"
+if [ -z "$EXTERNAL_IP" ]; then
+  echo "Error: EXTERNAL_IP must be set."
+  echo "Set EXTERNAL_IP in .env before starting the Compose stack."
   exit 1
 fi
 
-if [ -z "$COTURN_PORT" ]; then
-  echo "Error: COTURN_PORT must be set."
-  echo "Example: docker run -e COTURN_PORT=3478 crossdesk-server"
-  exit 1
-fi
-
-if [ -z "$MIN_PORT" ] || [ -z "$MAX_PORT" ]; then
-  echo "Error: MIN_PORT and MAX_PORT must be set."
-  echo "Example: docker run -e MIN_PORT=50000 -e MAX_PORT=60000 crossdesk-server"
-  exit 1
-fi
-
-for port_name in CROSSDESK_SERVER_PORT COTURN_PORT MIN_PORT MAX_PORT; do
+for port_name in CROSSDESK_SERVER_PORT; do
   port_value="${!port_name}"
   if ! is_uint "$port_value" || [ "$port_value" -lt 1 ] || [ "$port_value" -gt 65535 ]; then
     echo "Error: $port_name must be an integer between 1 and 65535."
     exit 1
   fi
 done
-
-if [ "$MIN_PORT" -gt "$MAX_PORT" ]; then
-  echo "Error: MIN_PORT must be less than or equal to MAX_PORT."
-  exit 1
-fi
 
 # check and generate certificates if needed
 CERT_DIR="/var/lib/crossdesk/certs"
@@ -75,32 +53,6 @@ if [ ! -f "$CERT_KEY" ] || [ ! -f "$CERT_BUNDLE" ]; then
 else
   echo "Certificate files found, skipping generation"
 fi
-
-# generate coturn configuration file
-mkdir -p /etc/coturn
-cat > "$CONF_FILE" <<EOF
-# coturn auto-generated configuration
-listening-port=${COTURN_PORT}
-listening-ip=${INTERNAL_IP}
-external-ip=${EXTERNAL_IP}
-min-port=${MIN_PORT}
-max-port=${MAX_PORT}
-verbose
-fingerprint
-lt-cred-mech
-user=crossdesk:crossdeskpw
-realm=crossdesk
-cert=${CERT_FILE}
-pkey=${PKEY_FILE}
-log-file=/var/log/crossdesk/turn.log
-no-cli
-EOF
-
-echo "generated coturn config at $CONF_FILE"
-echo "using certificate: $CERT_FILE"
-
-# start coturn in the background
-turnserver -c "$CONF_FILE" &
 
 # start crossdesk-server as main foreground process
 echo "Starting crossdesk-server..."
