@@ -10,6 +10,10 @@ services:
     environment:
       EXTERNAL_IP: "${EXTERNAL_IP:?Set EXTERNAL_IP in .env}"
       CROSSDESK_SERVER_PORT: "${CROSSDESK_SERVER_PORT:-9099}"
+      COTURN_PUBLIC_HOST: "${COTURN_PUBLIC_HOST:-}"
+      COTURN_PORT: "${COTURN_PORT:-3478}"
+      COTURN_AUTH_SECRET: "${COTURN_AUTH_SECRET:?Set COTURN_AUTH_SECRET in .env}"
+      COTURN_CREDENTIAL_TTL_SECONDS: "${COTURN_CREDENTIAL_TTL_SECONDS:-3600}"
       ADMIN_USERNAME: "${ADMIN_USERNAME:-}"
       ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
       CROSSDESK_GEOIP_LOOKUP: "${CROSSDESK_GEOIP_LOOKUP:-0}"
@@ -64,9 +68,9 @@ services:
       - "--min-port=${MIN_PORT:-50000}"
       - "--max-port=${MAX_PORT:-60000}"
       - --fingerprint
-      - --lt-cred-mech
+      - --use-auth-secret
       - --dtls
-      - "--user=${COTURN_USERNAME:-crossdesk}:${COTURN_PASSWORD:-crossdeskpw}"
+      - "--static-auth-secret=${COTURN_AUTH_SECRET:?Set COTURN_AUTH_SECRET in .env}"
       - "--realm=${COTURN_REALM:-crossdesk}"
       - "--stateless-nonce-secret=${COTURN_STATELESS_NONCE_SECRET:?Set COTURN_STATELESS_NONCE_SECRET in .env}"
       - --cert=/certs/api.crossdesk.cn_bundle.crt

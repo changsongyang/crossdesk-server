@@ -61,7 +61,7 @@ sudo docker build -f docker/dockerfile -t image-name .
 ```bash
 cp env.example .env
 
-# 编辑公网 IP、内网 IP、端口和 TURN 凭据
+# 编辑公网 IP、内网 IP、端口和 TURN 共享密钥
 vi .env
 
 sudo docker compose pull
@@ -126,11 +126,15 @@ sudo docker compose \
 - CROSSDESK_SERVER_PORT：自托管服务使用的端口，对应 CrossDesk 客户端**自托管服务器配置**中填写的**服务器端口**
 - COTURN_PORT: COTURN 服务使用的端口, 对应 CrossDesk 客户端**自托管服务器配置**中填写的**中继服务端口**
 - MIN_PORT/MAX_PORT：COTURN 服务使用的端口范围，例如：MIN_PORT=50000, MAX_PORT=60000，范围可根据客户端数量调整。
-- COTURN_USERNAME/COTURN_PASSWORD：TURN 长期凭据，必须与客户端配置一致。
+- COTURN_PUBLIC_HOST：可选的 TURN 公网域名或 IP；留空时使用 `EXTERNAL_IP`。
+- COTURN_AUTH_SECRET：CrossDesk Server 与 Coturn 共享的签名密钥，使用 `openssl rand -hex 32` 生成；不得下发客户端。
+- COTURN_CREDENTIAL_TTL_SECONDS：信令服务签发给客户端的 TURN 临时凭据有效期，范围 60–86400 秒，默认 3600 秒。
 - COTURN_STATELESS_NONCE_SECRET：使用 `openssl rand -hex 32` 生成并保持不变，避免 Coturn 重启后所有客户端因 nonce 密钥变化触发额外的 438 重认证。
 - COTURN_LOG_LEVEL：默认 `warning`，避免按请求打印调试日志。
 - COTURN_MEMORY_LIMIT：Coturn 容器内存上限，默认 `512m`，可按并发量调整。
 - CROSSDESK_DATA_DIR/CROSSDESK_LOG_DIR：宿主机上的数据、证书和日志目录。
+
+客户端登录成功以及每次创建新的 ICE 连接前，信令服务都会签发新的 TURN REST API 临时用户名和密码。客户端不再内置固定的 Coturn 账户。`COTURN_AUTH_SECRET` 与 `COTURN_STATELESS_NONCE_SECRET` 用途不同，应分别生成。
 
 ### 日志模式（默认：混合模式）
 

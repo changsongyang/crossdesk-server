@@ -11,13 +11,16 @@
 
 #include "device_db_manager.h"
 #include "transmission_manager.h"
+#include "turn_credentials.h"
 
 using nlohmann::json;
 
 class SignalNegotiation {
  public:
   SignalNegotiation(std::shared_ptr<TransmissionManager> transmission_manager,
-                    DeviceDBManager* device_db);
+                    DeviceDBManager* device_db,
+                    std::shared_ptr<TurnCredentialIssuer>
+                        turn_credential_issuer = nullptr);
   ~SignalNegotiation();
 
   void SetSendMsgCallback(
@@ -33,11 +36,15 @@ class SignalNegotiation {
   bool answer(websocketpp::connection_hdl hdl, const json& j);
   bool new_candidate(websocketpp::connection_hdl hdl, const json& j);
   bool new_candidate_mid(websocketpp::connection_hdl hdl, const json& j);
+  bool turn_credentials(websocketpp::connection_hdl hdl, const json& j);
   void OnWebClientDisconnect(const std::string& user_id);
 
  private:
+  void AddTurnCredentials(json& message, const std::string& user_id) const;
+
   std::shared_ptr<TransmissionManager> transmission_manager_;
   DeviceDBManager* device_db_manager_;
+  std::shared_ptr<TurnCredentialIssuer> turn_credential_issuer_;
   std::function<void(websocketpp::connection_hdl, json)> send_msg_;
 };
 

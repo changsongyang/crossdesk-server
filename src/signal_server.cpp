@@ -20,6 +20,7 @@ constexpr long kRecoveredSessionCleanupDelayMs = 120000;
 constexpr size_t kMaxClientNetworkInfoJobs = 1024;
 constexpr int kDefaultGeoIpFailureTtlMs = 60000;
 constexpr int kDefaultGeoIpFailureMaxTtlMs = 1800000;
+constexpr int kDefaultTurnCredentialTtlSeconds = 3600;
 
 int EnvMillis(const char* name, int fallback, int min_value, int max_value) {
   const char* raw = std::getenv(name);
@@ -32,6 +33,35 @@ int EnvMillis(const char* name, int fallback, int min_value, int max_value) {
     return fallback;
   }
   return static_cast<int>(value);
+}
+
+std::string EnvString(const char* name) {
+  const char* raw = std::getenv(name);
+  return raw ? raw : "";
+}
+
+std::shared_ptr<TurnCredentialIssuer> CreateTurnCredentialIssuer() {
+  const std::string secret = EnvString("COTURN_AUTH_SECRET");
+  std::string host = EnvString("COTURN_PUBLIC_HOST");
+  if (host.empty()) {
+    host = EnvString("EXTERNAL_IP");
+  }
+  if (secret.empty() || host.empty()) {
+    LOG_WARN(
+        "Dynamic TURN credentials disabled: COTURN_AUTH_SECRET or TURN public "
+        "host is empty");
+    return nullptr;
+  }
+
+  const int port = EnvMillis("COTURN_PORT", 3478, 1, 65535);
+  const int ttl_seconds =
+      EnvMillis("COTURN_CREDENTIAL_TTL_SECONDS",
+                kDefaultTurnCredentialTtlSeconds, 60, 86400);
+  LOG_INFO("Dynamic TURN credentials enabled for [{}:{}], TTL [{}] seconds",
+           host, port, ttl_seconds);
+  return std::make_shared<TurnCredentialIssuer>(
+      secret, host, static_cast<uint16_t>(port),
+      static_cast<uint32_t>(ttl_seconds));
 }
 
 std::chrono::milliseconds GeoIpFailureRetryDelay(int failure_count) {
@@ -148,7 +178,8 @@ SignalServer::SignalServer() {
   RestorePersistedRemoteControlSessions(transmission_manager_,
                                         device_db_manager_.get());
   signal_negotiation_ = std::make_unique<SignalNegotiation>(
-      transmission_manager_, device_db_manager_.get());
+      transmission_manager_, device_db_manager_.get(),
+      CreateTurnCredentialIssuer());
   signal_negotiation_->SetSendMsgCallback(std::bind(&SignalServer::SendMsg,
                                                     this, std::placeholders::_1,
                                                     std::placeholders::_2));
@@ -222,7 +253,8 @@ SignalServer::SignalServer(uint16_t port, std::string certs_dir,
   RestorePersistedRemoteControlSessions(transmission_manager_,
                                         device_db_manager_.get());
   signal_negotiation_ = std::make_unique<SignalNegotiation>(
-      transmission_manager_, device_db_manager_.get());
+      transmission_manager_, device_db_manager_.get(),
+      CreateTurnCredentialIssuer());
   signal_negotiation_->SetSendMsgCallback(std::bind(&SignalServer::SendMsg,
                                                     this, std::placeholders::_1,
                                                     std::placeholders::_2));
@@ -795,6 +827,9 @@ void SignalServer::OnMessage(websocketpp::connection_hdl hdl,
         break;
       case "new_candidate_mid"_H:
         signal_negotiation_->new_candidate_mid(hdl, j);
+        break;
+      case "turn_credentials"_H:
+        signal_negotiation_->turn_credentials(hdl, j);
         break;
       case "recent_connections_presence"_H: {
         std::string user_id;

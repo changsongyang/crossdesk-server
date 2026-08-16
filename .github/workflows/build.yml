@@ -23,6 +23,7 @@ jobs:
       - name: Validate shell scripts and Compose configuration
         shell: bash
         env:
+          COTURN_AUTH_SECRET: ci-validation-only-not-for-production
           COTURN_STATELESS_NONCE_SECRET: ci-validation-only-not-for-production
         run: |
           bash -n docker/start.sh docker/generate_certs.sh

@@ -35,7 +35,9 @@ int main() {
     expect(!offline_host.password.empty(), "test host password is registered");
 
     auto transmission = std::make_shared<TransmissionManager>();
-    SignalNegotiation negotiation(transmission, &db);
+    auto turn_issuer = std::make_shared<TurnCredentialIssuer>(
+        "test-turn-secret", "turn.example.com", 3478, 3600);
+    SignalNegotiation negotiation(transmission, &db, turn_issuer);
 
     std::vector<json> sent_messages;
     auto requester_connection = std::make_shared<int>(1);
@@ -87,6 +89,49 @@ int main() {
            "wrong device password login does not replace original password");
     expect(db.VerifyDevice(offline_host.device_id, "attacker-password") != 0,
            "wrong device password is not accepted after failed login");
+
+    sent_messages.clear();
+    auto authenticated_connection = std::make_shared<int>(3);
+    websocketpp::connection_hdl authenticated_hdl(authenticated_connection);
+    json valid_login = {
+        {"type", "login"},
+        {"user_id", offline_host.device_id + "@" + offline_host.password},
+    };
+    negotiation.login_user(authenticated_hdl, valid_login);
+
+    expect(sent_messages.size() == 1,
+           "successful login sends one response");
+    if (!sent_messages.empty()) {
+      const json& response = sent_messages[0];
+      expect(response.value("status", "") == "success",
+             "valid device password login succeeds");
+      expect(response.contains("turn") && response["turn"].is_object(),
+             "successful login includes dynamic TURN credentials");
+      if (response.contains("turn") && response["turn"].is_object()) {
+        const json& turn = response["turn"];
+        expect(turn.value("host", "") == "turn.example.com",
+               "TURN response includes configured public host");
+        expect(turn.value("port", 0) == 3478,
+               "TURN response includes configured port");
+        const std::string username = turn.value("username", "");
+        expect(username.size() > offline_host.device_id.size() + 1 &&
+                   username.substr(username.size() -
+                                   offline_host.device_id.size() - 1) ==
+                       ":" + offline_host.device_id,
+               "TURN username is scoped to the authenticated device");
+        expect(!turn.value("password", "").empty(),
+               "TURN response includes a temporary password");
+      }
+    }
+
+    sent_messages.clear();
+    negotiation.turn_credentials(authenticated_hdl,
+                                 {{"type", "turn_credentials"}});
+    expect(sent_messages.size() == 1 &&
+               sent_messages[0].value("status", "") == "success" &&
+               sent_messages[0].contains("turn"),
+           "authenticated client can explicitly refresh TURN credentials");
+
   }
 
   std::filesystem::remove(db_path);

@@ -59,7 +59,7 @@ Download `compose.yaml` and `env.example` from the GitHub Release. The released 
 ```bash
 cp env.example .env
 
-# Set the public/private IPs, ports, and TURN credentials.
+# Set the public/private IPs, ports, and TURN shared secret.
 vi .env
 
 sudo docker compose pull
@@ -124,11 +124,15 @@ sudo docker compose \
 - **CROSSDESK_SERVER_PORT**: The port used by the self-hosted service. This corresponds to **Server Port** in the CrossDesk client’s **Self-Hosted Server Configuration**.
 - **COTURN_PORT**: The port used by the COTURN service. This corresponds to **Relay Service Port** in the CrossDesk client’s **Self-Hosted Server Configuration**.
 - **MIN_PORT / MAX_PORT**: The port range used by the COTURN service. Example: `MIN_PORT=50000`, `MAX_PORT=60000`. Adjust the range depending on the number of clients.
-- **COTURN_USERNAME / COTURN_PASSWORD**: TURN long-term credentials; they must match the client configuration.
+- **COTURN_PUBLIC_HOST**: Optional public TURN hostname or IP; defaults to `EXTERNAL_IP` when empty.
+- **COTURN_AUTH_SECRET**: Signing secret shared only by CrossDesk Server and Coturn. Generate it with `openssl rand -hex 32`; never send it to clients.
+- **COTURN_CREDENTIAL_TTL_SECONDS**: Lifetime of temporary TURN credentials issued by the signaling service, from 60 to 86400 seconds; defaults to 3600.
 - **COTURN_STATELESS_NONCE_SECRET**: Generate it with `openssl rand -hex 32` and keep it stable so Coturn restarts do not force every client through an extra 438 re-authentication round trip.
 - **COTURN_LOG_LEVEL**: Defaults to `warning` to avoid per-request debug logging.
 - **COTURN_MEMORY_LIMIT**: Coturn container memory limit; defaults to `512m` and can be adjusted for expected concurrency.
 - **CROSSDESK_DATA_DIR / CROSSDESK_LOG_DIR**: Host directories for persistent data, certificates, and CrossDesk logs.
+
+The signaling service issues fresh TURN REST API usernames and passwords after client login and before each new ICE connection is created. Clients no longer embed a fixed Coturn account. `COTURN_AUTH_SECRET` and `COTURN_STATELESS_NONCE_SECRET` serve different purposes and should be generated independently.
 
 ### Logging Mode (Default: Hybrid)
 

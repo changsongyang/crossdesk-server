@@ -1,5 +1,7 @@
 #include "signal_negotiation.h"
 
+#include <utility>
+
 #include "log.h"
 
 namespace {
@@ -16,11 +18,27 @@ bool GetStringField(const json& j, const char* key, std::string& value) {
 
 SignalNegotiation::SignalNegotiation(
     std::shared_ptr<TransmissionManager> transmission_manager,
-    DeviceDBManager* device_db)
+    DeviceDBManager* device_db,
+    std::shared_ptr<TurnCredentialIssuer> turn_credential_issuer)
     : transmission_manager_(transmission_manager),
-      device_db_manager_(device_db) {}
+      device_db_manager_(device_db),
+      turn_credential_issuer_(std::move(turn_credential_issuer)) {}
 
 SignalNegotiation::~SignalNegotiation() {}
+
+void SignalNegotiation::AddTurnCredentials(
+    json& message, const std::string& user_id) const {
+  if (!turn_credential_issuer_ || user_id.empty()) {
+    return;
+  }
+
+  const TurnCredentials credentials = turn_credential_issuer_->Issue(user_id);
+  message["turn"] = {{"host", credentials.host},
+                     {"port", credentials.port},
+                     {"username", credentials.username},
+                     {"password", credentials.password},
+                     {"expires_at", credentials.expires_at}};
+}
 
 bool SignalNegotiation::login_user(websocketpp::connection_hdl hdl,
                                    const json& j) {
@@ -85,6 +103,7 @@ bool SignalNegotiation::login_user(websocketpp::connection_hdl hdl,
       json message = {{"type", "login"},
                       {"user_id", return_host_id},
                       {"status", "success"}};
+      AddTurnCredentials(message, ret_host_id);
       send_msg_(hdl, message);
     } else {
       json message = {
@@ -99,6 +118,7 @@ bool SignalNegotiation::login_user(websocketpp::connection_hdl hdl,
     if (success) {
       json message = {
           {"type", "login"}, {"user_id", host_id}, {"status", "success"}};
+      AddTurnCredentials(message, host_id);
       send_msg_(hdl, message);
     } else {
       json message = {
@@ -261,6 +281,7 @@ bool SignalNegotiation::join_transmission(websocketpp::connection_hdl hdl,
                     {"user_id", user_id},
                     {"status", "success"}};
 
+    AddTurnCredentials(message, host_id);
     send_msg_(host_hdl, message);
   } else if (-1 == ret) {
     LOG_ERROR("Password incorrect for transmission id [{}]",
@@ -308,6 +329,7 @@ bool SignalNegotiation::offer(websocketpp::connection_hdl hdl, const json& j) {
         {"remote_user_id", user_id},
         {"sdp", sdp},
     };
+    AddTurnCredentials(message, remote_user_id);
     LOG_INFO("[{}] send offer to [{}]", user_id, remote_user_id);
     send_msg_(destination_hdl, message);
 
@@ -401,6 +423,25 @@ bool SignalNegotiation::new_candidate_mid(websocketpp::connection_hdl hdl,
                   {"mid", mid}};
   send_msg_(destination_hdl, message);
 
+  return true;
+}
+
+bool SignalNegotiation::turn_credentials(websocketpp::connection_hdl hdl,
+                                         const json& j) {
+  (void)j;
+  json message = {{"type", "turn_credentials"}};
+  const std::string user_id = transmission_manager_->GetUserId(hdl);
+  if (user_id.empty()) {
+    message["status"] = "fail";
+    message["reason"] = "Not authenticated";
+  } else if (!turn_credential_issuer_) {
+    message["status"] = "fail";
+    message["reason"] = "TURN credentials are not configured";
+  } else {
+    message["status"] = "success";
+    AddTurnCredentials(message, user_id);
+  }
+  send_msg_(hdl, message);
   return true;
 }
 
