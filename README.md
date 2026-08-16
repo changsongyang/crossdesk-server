@@ -71,6 +71,24 @@ sudo docker compose ps
 
 如果使用仓库中的 `.env.example`，建议将 `CROSSDESK_IMAGE` 从 `latest` 改为需要部署的固定版本 tag。
 
+### 使用 CI 测试镜像
+
+默认分支的 CI 构建成功后会发布多架构测试镜像 `crossdesk/crossdesk-server:test`。该标签会随最新成功构建更新，仅用于测试环境，不应在生产环境使用。
+
+在测试服务器的 `.env` 中设置：
+
+```dotenv
+CROSSDESK_IMAGE=crossdesk/crossdesk-server:test
+```
+
+每次部署前应先拉取最新镜像；`--no-build` 可确保服务器直接使用 CI 发布的镜像：
+
+```bash
+sudo docker compose pull
+sudo docker compose up -d --no-build
+sudo docker compose ps
+```
+
 ### 从本地源码构建
 
 先按照上文编译并将可执行文件放到 `dist/crossdesk_server`，然后执行：

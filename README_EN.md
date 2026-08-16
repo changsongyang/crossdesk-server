@@ -69,6 +69,24 @@ sudo docker compose ps
 
 When using `.env.example` from the repository, change `CROSSDESK_IMAGE` from `latest` to the exact release tag intended for production.
 
+### Use the CI Test Image
+
+After a successful CI build of the default branch, the multi-architecture test image is published as `crossdesk/crossdesk-server:test`. This mutable tag tracks the latest successful build and is intended only for test environments, not production.
+
+Set the following value in `.env` on the test server:
+
+```dotenv
+CROSSDESK_IMAGE=crossdesk/crossdesk-server:test
+```
+
+Pull the image before every deployment. `--no-build` ensures that the server uses the image published by CI:
+
+```bash
+sudo docker compose pull
+sudo docker compose up -d --no-build
+sudo docker compose ps
+```
+
 ### Build from Local Source
 
 Build the binary as described above, place it at `dist/crossdesk_server`, and then run:
