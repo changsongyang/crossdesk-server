@@ -84,11 +84,51 @@ int main() {
              "wrong device password login response has login type");
       expect(sent_messages[0].value("status", "") == "fail",
              "wrong device password login fails");
+      expect(sent_messages[0].value("reason", "") == "Incorrect password",
+             "wrong device password login reports a specific reason");
     }
     expect(db.VerifyDevice(offline_host.device_id, offline_host.password) == 0,
            "wrong device password login does not replace original password");
     expect(db.VerifyDevice(offline_host.device_id, "attacker-password") != 0,
            "wrong device password is not accepted after failed login");
+
+    sent_messages.clear();
+    negotiation.change_password(
+        attacker_hdl,
+        {{"type", "change_password"}, {"new_password", "654321"}});
+    expect(sent_messages.size() == 1 &&
+               sent_messages[0].value("status", "") == "fail" &&
+               sent_messages[0].value("reason", "") ==
+                   "Missing or invalid request ID",
+           "password change requires a request id");
+
+    sent_messages.clear();
+    negotiation.change_password(
+        attacker_hdl,
+        {{"type", "change_password"},
+         {"request_id", "unauthenticated"},
+         {"new_password", "654321"}});
+    expect(sent_messages.size() == 1 &&
+               sent_messages[0].value("status", "") == "fail" &&
+               sent_messages[0].value("reason", "") == "Not authenticated",
+           "unauthenticated connection cannot change a device password");
+    expect(db.VerifyDevice(offline_host.device_id, offline_host.password) == 0,
+           "unauthenticated password change leaves the password unchanged");
+
+    sent_messages.clear();
+    auto controller_connection = std::make_shared<int>(5);
+    websocketpp::connection_hdl controller_hdl(controller_connection);
+    transmission->BindUserToWsHandle("C-controller", controller_hdl);
+    negotiation.change_password(
+        controller_hdl,
+        {{"type", "change_password"},
+         {"request_id", "controller"},
+         {"new_password", "654321"}});
+    expect(sent_messages.size() == 1 &&
+               sent_messages[0].value("status", "") == "fail",
+           "temporary controller identity cannot change a device password");
+    expect(db.VerifyDevice(offline_host.device_id, offline_host.password) == 0,
+           "controller password change leaves the device password unchanged");
 
     sent_messages.clear();
     auto authenticated_connection = std::make_shared<int>(3);
@@ -131,6 +171,47 @@ int main() {
                sent_messages[0].value("status", "") == "success" &&
                sent_messages[0].contains("turn"),
            "authenticated client can explicitly refresh TURN credentials");
+
+    sent_messages.clear();
+    negotiation.change_password(
+        authenticated_hdl,
+        {{"type", "change_password"},
+         {"request_id", "malformed"},
+         {"new_password", "short"}});
+    expect(sent_messages.size() == 1 &&
+               sent_messages[0].value("status", "") == "fail",
+           "authenticated client cannot set a malformed password");
+    expect(db.VerifyDevice(offline_host.device_id, offline_host.password) == 0,
+           "malformed password change leaves the password unchanged");
+
+    sent_messages.clear();
+    const std::string new_password = "654321";
+    negotiation.change_password(
+        authenticated_hdl,
+        {{"type", "change_password"},
+         {"request_id", "successful"},
+         {"new_password", new_password}});
+    expect(sent_messages.size() == 1 &&
+               sent_messages[0].value("type", "") == "change_password" &&
+               sent_messages[0].value("status", "") == "success" &&
+               sent_messages[0].value("request_id", "") == "successful" &&
+               sent_messages[0].value("user_id", "") == offline_host.device_id,
+           "authenticated device can change its own password");
+    expect(db.VerifyDevice(offline_host.device_id, offline_host.password) != 0,
+           "old password is rejected after a successful password change");
+    expect(db.VerifyDevice(offline_host.device_id, new_password) == 0,
+           "new password is accepted after a successful password change");
+
+    sent_messages.clear();
+    auto relogin_connection = std::make_shared<int>(4);
+    websocketpp::connection_hdl relogin_hdl(relogin_connection);
+    negotiation.login_user(
+        relogin_hdl,
+        {{"type", "login"},
+         {"user_id", offline_host.device_id + "@" + new_password}});
+    expect(sent_messages.size() == 1 &&
+               sent_messages[0].value("status", "") == "success",
+           "device can log in again with its changed password");
 
   }
 

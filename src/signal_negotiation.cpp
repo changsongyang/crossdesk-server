@@ -70,11 +70,16 @@ bool SignalNegotiation::login_user(websocketpp::connection_hdl hdl,
 
     // Check if AddDevice failed
     if (ret_host_id.empty()) {
+      std::string reason = "Failed to register device";
+      if (!host_id.empty() &&
+          device_db_manager_->VerifyDevice(host_id, password) == -1) {
+        reason = "Incorrect password";
+      }
       LOG_ERROR("Failed to add device for host_id [{}]", host_id);
       json message = {{"type", "login"},
                       {"user_id", ""},
                       {"status", "fail"},
-                      {"reason", "Failed to register device"}};
+                      {"reason", reason}};
       send_msg_(hdl, message);
       return true;
     }
@@ -423,6 +428,49 @@ bool SignalNegotiation::new_candidate_mid(websocketpp::connection_hdl hdl,
                   {"mid", mid}};
   send_msg_(destination_hdl, message);
 
+  return true;
+}
+
+bool SignalNegotiation::change_password(websocketpp::connection_hdl hdl,
+                                        const json& j) {
+  json message = {{"type", "change_password"}};
+  std::string request_id;
+  if (!GetStringField(j, "request_id", request_id) || request_id.empty()) {
+    message["status"] = "fail";
+    message["reason"] = "Missing or invalid request ID";
+    send_msg_(hdl, message);
+    return true;
+  }
+  message["request_id"] = request_id;
+
+  const std::string user_id = transmission_manager_->GetUserId(hdl);
+  message["user_id"] = user_id;
+
+  if (user_id.empty()) {
+    message["status"] = "fail";
+    message["reason"] = "Not authenticated";
+  } else if (user_id.rfind("C-", 0) == 0 ||
+             user_id.rfind("web-", 0) == 0) {
+    // Controller and browser identities are temporary and are not authenticated
+    // against a persisted device password.
+    message["status"] = "fail";
+    message["reason"] = "Password changes are not allowed for this identity";
+  } else {
+    std::string new_password;
+    if (!GetStringField(j, "new_password", new_password) ||
+        new_password.size() != 6) {
+      message["status"] = "fail";
+      message["reason"] = "Password must contain exactly 6 characters";
+    } else if (!device_db_manager_->UpdatePassword(user_id, new_password)) {
+      message["status"] = "fail";
+      message["reason"] = "Failed to update password";
+    } else {
+      message["status"] = "success";
+      LOG_INFO("Authenticated client [{}] changed its device password", user_id);
+    }
+  }
+
+  send_msg_(hdl, message);
   return true;
 }
 

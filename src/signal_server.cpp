@@ -828,6 +828,9 @@ void SignalServer::OnMessage(websocketpp::connection_hdl hdl,
       case "new_candidate_mid"_H:
         signal_negotiation_->new_candidate_mid(hdl, j);
         break;
+      case "change_password"_H:
+        signal_negotiation_->change_password(hdl, j);
+        break;
       case "turn_credentials"_H:
         signal_negotiation_->turn_credentials(hdl, j);
         break;
