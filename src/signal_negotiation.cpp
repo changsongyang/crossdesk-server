@@ -1,5 +1,9 @@
 #include "signal_negotiation.h"
 
+#include <openssl/sha.h>
+
+#include <iomanip>
+#include <sstream>
 #include <utility>
 
 #include "log.h"
@@ -12,6 +16,18 @@ bool GetStringField(const json& j, const char* key, std::string& value) {
   }
   value = j[key].get<std::string>();
   return true;
+}
+
+std::string PasswordFingerprint(const std::string& password) {
+  unsigned char digest[SHA256_DIGEST_LENGTH];
+  SHA256(reinterpret_cast<const unsigned char*>(password.data()),
+         password.size(), digest);
+  std::ostringstream stream;
+  stream << std::hex << std::setfill('0');
+  for (unsigned char byte : digest) {
+    stream << std::setw(2) << static_cast<unsigned int>(byte);
+  }
+  return stream.str();
 }
 
 }  // namespace
@@ -433,9 +449,12 @@ bool SignalNegotiation::new_candidate_mid(websocketpp::connection_hdl hdl,
 
 bool SignalNegotiation::change_password(websocketpp::connection_hdl hdl,
                                         const json& j) {
+  constexpr size_t kMaxRememberedPasswordChanges = 4096;
+  constexpr size_t kMaxPasswordChangeRequestIdLength = 128;
   json message = {{"type", "change_password"}};
   std::string request_id;
-  if (!GetStringField(j, "request_id", request_id) || request_id.empty()) {
+  if (!GetStringField(j, "request_id", request_id) || request_id.empty() ||
+      request_id.size() > kMaxPasswordChangeRequestIdLength) {
     message["status"] = "fail";
     message["reason"] = "Missing or invalid request ID";
     send_msg_(hdl, message);
@@ -461,12 +480,39 @@ bool SignalNegotiation::change_password(websocketpp::connection_hdl hdl,
         new_password.size() != 6) {
       message["status"] = "fail";
       message["reason"] = "Password must contain exactly 6 characters";
-    } else if (!device_db_manager_->UpdatePassword(user_id, new_password)) {
-      message["status"] = "fail";
-      message["reason"] = "Failed to update password";
     } else {
-      message["status"] = "success";
-      LOG_INFO("Authenticated client [{}] changed its device password", user_id);
+      const std::string cache_key = user_id + "\n" + request_id;
+      const std::string password_fingerprint =
+          PasswordFingerprint(new_password);
+      std::lock_guard<std::mutex> lock(password_change_mutex_);
+      const auto cached = password_change_results_.find(cache_key);
+      if (cached != password_change_results_.end()) {
+        if (cached->second.password_fingerprint != password_fingerprint) {
+          message["status"] = "fail";
+          message["reason"] = "Request ID was already used";
+        } else {
+          message = cached->second.response;
+          LOG_INFO("Replay password change result for authenticated client "
+                   "[{}] request [{}]",
+                   user_id, request_id);
+        }
+      } else if (!device_db_manager_->UpdatePassword(user_id, new_password)) {
+        message["status"] = "fail";
+        message["reason"] = "Failed to update password";
+      } else {
+        message["status"] = "success";
+        password_change_results_.emplace(
+            cache_key, PasswordChangeResult{password_fingerprint, message});
+        password_change_result_order_.push_back(cache_key);
+        while (password_change_result_order_.size() >
+               kMaxRememberedPasswordChanges) {
+          password_change_results_.erase(
+              password_change_result_order_.front());
+          password_change_result_order_.pop_front();
+        }
+        LOG_INFO("Authenticated client [{}] changed its device password",
+                 user_id);
+      }
     }
   }
 
