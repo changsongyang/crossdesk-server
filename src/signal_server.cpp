@@ -183,7 +183,9 @@ SignalServer::SignalServer() {
   signal_negotiation_->SetSendMsgCallback(std::bind(&SignalServer::SendMsg,
                                                     this, std::placeholders::_1,
                                                     std::placeholders::_2));
-  geo_location_resolver_ = std::make_unique<GeoLocationResolver>();
+  if (GeoLocationResolver::IsEnabled()) {
+    geo_location_resolver_ = std::make_unique<GeoLocationResolver>();
+  }
   presence_manager_ = std::make_unique<PresenceManager>();
   presence_manager_->SetSendMsgCallback(std::bind(&SignalServer::SendMsg, this,
                                                   std::placeholders::_1,
@@ -199,7 +201,9 @@ SignalServer::SignalServer() {
       device_db_manager_.get(), [this](const std::string& id, json msg) {
         SendMsg(transmission_manager_->GetWsHandle(id), msg);
       });
-  StartClientNetworkInfoWorker();
+  if (geo_location_resolver_) {
+    StartClientNetworkInfoWorker();
+  }
 }
 
 SignalServer::SignalServer(uint16_t port, std::string certs_dir,
@@ -258,7 +262,9 @@ SignalServer::SignalServer(uint16_t port, std::string certs_dir,
   signal_negotiation_->SetSendMsgCallback(std::bind(&SignalServer::SendMsg,
                                                     this, std::placeholders::_1,
                                                     std::placeholders::_2));
-  geo_location_resolver_ = std::make_unique<GeoLocationResolver>();
+  if (GeoLocationResolver::IsEnabled()) {
+    geo_location_resolver_ = std::make_unique<GeoLocationResolver>();
+  }
   presence_manager_ = std::make_unique<PresenceManager>();
   presence_manager_->SetSendMsgCallback(std::bind(&SignalServer::SendMsg, this,
                                                   std::placeholders::_1,
@@ -274,7 +280,9 @@ SignalServer::SignalServer(uint16_t port, std::string certs_dir,
       device_db_manager_.get(), [this](const std::string& id, json msg) {
         SendMsg(transmission_manager_->GetWsHandle(id), msg);
       });
-  StartClientNetworkInfoWorker();
+  if (geo_location_resolver_) {
+    StartClientNetworkInfoWorker();
+  }
 }
 
 SignalServer::~SignalServer() { StopClientNetworkInfoWorker(); }
@@ -313,7 +321,9 @@ void SignalServer::EnqueueClientNetworkInfo(websocketpp::connection_hdl hdl,
   ClientNetworkInfo network_info;
   network_info.client_ip = client_ip;
   presence_manager_->SetDeviceNetworkInfo(device_id, network_info);
-  EnqueueGeoIpLookup(client_ip, std::chrono::milliseconds(0));
+  if (geo_location_resolver_) {
+    EnqueueGeoIpLookup(client_ip, std::chrono::milliseconds(0));
+  }
 }
 
 void SignalServer::EnqueueGeoIpLookup(
@@ -334,7 +344,9 @@ void SignalServer::EnqueueGeoIpLookup(
       return;
     }
     if (network_info_jobs_.size() >= kMaxClientNetworkInfoJobs) {
-      LOG_WARN("GeoIP lookup queue is full, dropping [{}]", client_ip);
+      if (GeoLocationResolver::IsEnabled()) {
+        LOG_WARN("GeoIP lookup queue is full, dropping [{}]", client_ip);
+      }
       return;
     }
     pending_ip_lookup_at_[client_ip] = run_at;
@@ -384,12 +396,16 @@ void SignalServer::ProcessGeoIpLookup(const GeoIpLookupJob& job) {
     }
     size_t updated = presence_manager_->UpdateDevicesWithClientIp(
         job.client_ip, network_info);
-    LOG_INFO("GeoIP lookup for [{}] resolved [{}] and updated {} client(s)",
-             job.client_ip, network_info.location, updated);
+    if (GeoLocationResolver::IsEnabled()) {
+      LOG_INFO("GeoIP lookup for [{}] resolved [{}] and updated {} client(s)",
+               job.client_ip, network_info.location, updated);
+    }
     return;
   }
 
-  LOG_INFO("GeoIP lookup for [{}] returned Unknown", job.client_ip);
+  if (GeoLocationResolver::IsEnabled()) {
+    LOG_INFO("GeoIP lookup for [{}] returned Unknown", job.client_ip);
+  }
   if (!resolve_result.retryable) {
     std::lock_guard<std::mutex> lock(network_info_mutex_);
     pending_ip_lookup_at_.erase(job.client_ip);
@@ -415,7 +431,9 @@ void SignalServer::ProcessGeoIpLookup(const GeoIpLookupJob& job) {
         pending_ip_lookup_at_[job.client_ip] = retry_at;
         network_info_jobs_.push({job.client_ip, retry_at});
       } else {
-        LOG_WARN("GeoIP lookup queue is full, dropping [{}]", job.client_ip);
+        if (GeoLocationResolver::IsEnabled()) {
+          LOG_WARN("GeoIP lookup queue is full, dropping [{}]", job.client_ip);
+        }
       }
     }
     network_info_cv_.notify_one();

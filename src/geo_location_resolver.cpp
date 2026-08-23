@@ -34,7 +34,7 @@ std::string ToLower(std::string value) {
   return value;
 }
 
-bool PublicLookupEnabled() {
+bool ReadLookupEnabled() {
   const char* raw = std::getenv("CROSSDESK_GEOIP_LOOKUP");
   if (!raw) {
     return false;
@@ -388,12 +388,19 @@ ClientNetworkInfo GeoLocationResolver::Resolve(const std::string& ip) {
   return ResolveWithRetryInfo(ip).info;
 }
 
+bool GeoLocationResolver::IsEnabled() { return ReadLookupEnabled(); }
+
 GeoLocationResolveResult GeoLocationResolver::ResolveWithRetryInfo(
     const std::string& ip) {
   GeoLocationResolveResult result;
   ClientNetworkInfo info;
   info.client_ip = ip;
   if (ip.empty()) {
+    result.info = info;
+    return result;
+  }
+
+  if (!IsEnabled()) {
     result.info = info;
     return result;
   }
@@ -412,10 +419,8 @@ GeoLocationResolveResult GeoLocationResolver::ResolveWithRetryInfo(
   if (IsPrivateOrLocalIp(ip)) {
     info.location = "Private network";
   } else {
-    retryable = PublicLookupEnabled();
-    if (retryable) {
-      info = ResolvePublicIp(ip);
-    }
+    retryable = true;
+    info = ResolvePublicIp(ip);
   }
 
   if (HasLocationResult(info)) {

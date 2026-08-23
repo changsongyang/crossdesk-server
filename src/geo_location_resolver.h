@@ -15,6 +15,7 @@ struct GeoLocationResolveResult {
 
 class GeoLocationResolver {
  public:
+  static bool IsEnabled();
   ClientNetworkInfo Resolve(const std::string& ip);
   GeoLocationResolveResult ResolveWithRetryInfo(const std::string& ip);
 
