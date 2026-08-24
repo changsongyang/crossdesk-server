@@ -82,11 +82,15 @@
     .sessions-table td:nth-child(1), .sessions-table td:nth-child(2) { word-break: break-all; }
     .device-id { font-weight: 600; word-break: break-all; }
     .subline { display: block; color: #667085; font-size: 12px; margin-top: 3px; }
+    .client-meta { align-items: center; display: flex; flex-wrap: wrap; gap: 6px; margin-top: 3px; }
+    .client-meta .subline { margin-top: 0; }
     .badge { border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; line-height: 1; padding: 5px 8px; white-space: nowrap; }
     .badge.online { background: #dcfae6; color: #067647; }
     .badge.offline { background: #f2f4f7; color: #475467; }
     .badge.active { background: #fef0c7; color: #b54708; }
     .badge.web { background: #e0f2fe; color: #026aa2; }
+    .badge.platform { background: #ecfdf3; color: #027a48; }
+    .badge.version { background: #eef4ff; color: #3538cd; }
     .presence-table td:nth-child(2) { display: grid; gap: 4px; justify-items: start; }
     .presence-table td:nth-child(2) .badge { min-width: 58px; }
     .details-row td { background: #f9fafb; }

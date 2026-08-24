@@ -610,6 +610,8 @@ AdminHttpResponse AdminController::HandleOverview(
       devices.push_back({{"id", device.device_id},
                          {"online", device.online},
                          {"kind", ClientKind(device.device_id)},
+                         {"client_version", device.client_version},
+                         {"client_platform", device.client_platform},
                          {"updated_at", device.updated_at},
                          {"last_online_at",
                           device.online ? 0 : device.updated_at},

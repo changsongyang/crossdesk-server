@@ -42,6 +42,7 @@ class SignalNegotiation {
   bool new_candidate_mid(websocketpp::connection_hdl hdl, const json& j);
   bool change_password(websocketpp::connection_hdl hdl, const json& j);
   bool turn_credentials(websocketpp::connection_hdl hdl, const json& j);
+  bool client_info(websocketpp::connection_hdl hdl, const json& j);
   void OnWebClientDisconnect(const std::string& user_id);
 
  private:

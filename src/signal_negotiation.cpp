@@ -18,6 +18,11 @@ bool GetStringField(const json& j, const char* key, std::string& value) {
   return true;
 }
 
+bool ShouldTrackClientInfo(const std::string& user_id) {
+  return !user_id.empty() && user_id.rfind("web-", 0) != 0 &&
+         user_id.rfind("C-", 0) != 0;
+}
+
 std::string PasswordFingerprint(const std::string& password) {
   unsigned char digest[SHA256_DIGEST_LENGTH];
   SHA256(reinterpret_cast<const unsigned char*>(password.data()),
@@ -121,6 +126,10 @@ bool SignalNegotiation::login_user(websocketpp::connection_hdl hdl,
     transmission_manager_->BindHostToTransmission(ret_host_id, ret_host_id);
 
     if (success) {
+      if (ShouldTrackClientInfo(ret_host_id) &&
+          !device_db_manager_->UpdateDeviceClientInfo(ret_host_id, "", "")) {
+        LOG_WARN("Failed to clear client information for [{}]", ret_host_id);
+      }
       json message = {{"type", "login"},
                       {"user_id", return_host_id},
                       {"status", "success"}};
@@ -148,6 +157,42 @@ bool SignalNegotiation::login_user(websocketpp::connection_hdl hdl,
     }
   }
 
+  return true;
+}
+
+bool SignalNegotiation::client_info(websocketpp::connection_hdl hdl,
+                                    const json& j) {
+  std::string version;
+  std::string platform;
+  if (!GetStringField(j, "version", version) || version.empty() ||
+      version.size() > 64) {
+    LOG_ERROR("client_info missing or invalid field: version");
+    return false;
+  }
+  if (!GetStringField(j, "platform", platform) || platform.empty() ||
+      platform.size() > 32) {
+    LOG_ERROR("client_info missing or invalid field: platform");
+    return false;
+  }
+
+  const std::string user_id = transmission_manager_->GetUserId(hdl);
+  if (user_id.empty()) {
+    LOG_WARN("Ignore client_info from unauthenticated connection");
+    return false;
+  }
+
+  if (!ShouldTrackClientInfo(user_id)) {
+    return true;
+  }
+
+  if (!device_db_manager_->UpdateDeviceClientInfo(user_id, version,
+                                                   platform)) {
+    LOG_ERROR("Failed to store client information for [{}]", user_id);
+    return false;
+  }
+
+  LOG_INFO("Client [{}] reports version [{}] on [{}]", user_id, version,
+           platform);
   return true;
 }
 

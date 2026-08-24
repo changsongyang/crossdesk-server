@@ -426,6 +426,8 @@ void DeviceDBManager::InitDB() {
   EnsureTextColumn(db_, "device_presence", "geo_region");
   EnsureTextColumn(db_, "device_presence", "geo_city");
   EnsureTextColumn(db_, "device_presence", "geo_location");
+  EnsureTextColumn(db_, "device_presence", "client_version");
+  EnsureTextColumn(db_, "device_presence", "client_platform");
 
   const char* sql_presence_backfill =
       "UPDATE device_presence SET online_since = updated_at "
@@ -1036,6 +1038,38 @@ bool DeviceDBManager::UpdateDeviceNetworkInfo(
   sqlite3_bind_text(stmt, 6, network_info.location.c_str(), -1,
                     SQLITE_TRANSIENT);
   bool ok = (sqlite3_step(stmt) == SQLITE_DONE);
+  sqlite3_finalize(stmt);
+  return ok;
+}
+
+bool DeviceDBManager::UpdateDeviceClientInfo(
+    const std::string& device_id, const std::string& client_version,
+    const std::string& client_platform) {
+  std::lock_guard<std::recursive_mutex> lock(db_mutex_);
+  if (db_ == nullptr) {
+    LOG_ERROR("Database is not initialized in UpdateDeviceClientInfo.");
+    return false;
+  }
+  if (device_id.empty()) {
+    return false;
+  }
+
+  const char* sql =
+      "INSERT INTO device_presence "
+      "(device_id, online, updated_at, client_version, client_platform) "
+      "VALUES (?, 0, CAST(strftime('%s','now') AS INTEGER), ?, ?) "
+      "ON CONFLICT(device_id) DO UPDATE SET "
+      "client_version=excluded.client_version, "
+      "client_platform=excluded.client_platform;";
+
+  sqlite3_stmt* stmt = nullptr;
+  if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    return false;
+  }
+  sqlite3_bind_text(stmt, 1, device_id.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 2, client_version.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 3, client_platform.c_str(), -1, SQLITE_TRANSIENT);
+  const bool ok = sqlite3_step(stmt) == SQLITE_DONE;
   sqlite3_finalize(stmt);
   return ok;
 }
@@ -1668,7 +1702,8 @@ std::vector<OnlineDeviceInfo> DeviceDBManager::ListOnlineDevices(
       "FROM remote_control_sessions "
       "WHERE normalized_host_id = device_presence.device_id), 0) "
       "AS total_controlled_seconds, "
-      "client_ip, geo_country, geo_region, geo_city, geo_location "
+      "client_ip, geo_country, geo_region, geo_city, geo_location, "
+      "client_version, client_platform "
       "FROM device_presence "
       "WHERE online = 1 "
       "AND device_id NOT LIKE 'web-%' "
@@ -1707,6 +1742,8 @@ std::vector<OnlineDeviceInfo> DeviceDBManager::ListOnlineDevices(
     info.region = ColumnText(stmt, 10);
     info.city = ColumnText(stmt, 11);
     info.location = ColumnText(stmt, 12);
+    info.client_version = ColumnText(stmt, 13);
+    info.client_platform = ColumnText(stmt, 14);
     result.push_back(info);
   }
   sqlite3_finalize(stmt);
@@ -1771,7 +1808,8 @@ std::vector<OnlineDeviceInfo> DeviceDBManager::ListDevicePresence(
       "FROM remote_control_sessions "
       "WHERE normalized_host_id = device_presence.device_id), '') "
       "AS active_controlled_by, "
-      "client_ip, geo_country, geo_region, geo_city, geo_location "
+      "client_ip, geo_country, geo_region, geo_city, geo_location, "
+      "client_version, client_platform "
       "FROM device_presence "
       "WHERE " +
       DevicePresenceFilterClause(filter, kind);
@@ -1816,6 +1854,8 @@ std::vector<OnlineDeviceInfo> DeviceDBManager::ListDevicePresence(
     info.region = ColumnText(stmt, 16);
     info.city = ColumnText(stmt, 17);
     info.location = ColumnText(stmt, 18);
+    info.client_version = ColumnText(stmt, 19);
+    info.client_platform = ColumnText(stmt, 20);
     result.push_back(info);
   }
   sqlite3_finalize(stmt);

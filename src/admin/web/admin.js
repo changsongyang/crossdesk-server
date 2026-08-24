@@ -559,6 +559,13 @@
       return Number(activeCount) > 0 ? formatDuration(value) : '-';
     }
 
+    function platformLabel(platform) {
+      if (platform === 'windows') return 'Windows';
+      if (platform === 'macos') return 'macOS';
+      if (platform === 'linux') return 'Linux';
+      return platform || '';
+    }
+
     function appendDetailItem(parent, label, value, className, dataset) {
       const item = document.createElement('div');
       appendText(item, 'span', label);
@@ -590,7 +597,16 @@
         const clientCell = document.createElement('td');
         labelCell(clientCell, 'Client');
         appendText(clientCell, 'div', device.id, 'device-id');
-        appendText(clientCell, 'span', device.kind === 'web' ? 'web client' : 'PC client', 'subline');
+        const clientMeta = document.createElement('div');
+        clientMeta.className = 'client-meta';
+        appendText(clientMeta, 'span', device.kind === 'web' ? 'web client' : 'PC client', 'subline');
+        if (device.kind !== 'web' && device.client_platform) {
+          appendBadge(clientMeta, platformLabel(device.client_platform), 'platform');
+        }
+        if (device.kind !== 'web' && device.client_version) {
+          appendBadge(clientMeta, device.client_version, 'version');
+        }
+        clientCell.appendChild(clientMeta);
         row.appendChild(clientCell);
 
         const statusCell = document.createElement('td');

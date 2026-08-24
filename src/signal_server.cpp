@@ -852,6 +852,9 @@ void SignalServer::OnMessage(websocketpp::connection_hdl hdl,
       case "turn_credentials"_H:
         signal_negotiation_->turn_credentials(hdl, j);
         break;
+      case "client_info"_H:
+        signal_negotiation_->client_info(hdl, j);
+        break;
       case "recent_connections_presence"_H: {
         std::string user_id;
         if (!j.contains("user_id") || !j["user_id"].is_string()) {

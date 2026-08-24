@@ -42,6 +42,8 @@ struct OnlineDeviceInfo {
   std::string region;
   std::string city;
   std::string location;
+  std::string client_version;
+  std::string client_platform;
 };
 
 struct ClientNetworkInfo {
@@ -113,6 +115,9 @@ class DeviceDBManager {
   bool SetDeviceOnline(const std::string& device_id, bool online);
   bool UpdateDeviceNetworkInfo(const std::string& device_id,
                                const ClientNetworkInfo& network_info);
+  bool UpdateDeviceClientInfo(const std::string& device_id,
+                              const std::string& client_version,
+                              const std::string& client_platform);
   bool RecordRuntimeHeartbeat();
   bool StartRemoteControlSession(const std::string& transmission_id,
                                  const std::string& host_id,
