@@ -258,6 +258,12 @@ void TransmissionManager::SetRemoteControlSessionCallback(
   remote_control_session_callback_ = std::move(callback);
 }
 
+void TransmissionManager::SetSessionTimeoutCallback(
+    std::function<void(const std::string&)> callback) {
+  std::lock_guard<std::recursive_mutex> lock(ws_hdl_alive_checker_mutex_);
+  session_timeout_callback_ = std::move(callback);
+}
+
 bool TransmissionManager::ReleaseGuestFromTransmission(
     const std::string& guest_id) {
   std::lock_guard<std::recursive_mutex> lock(ws_hdl_alive_checker_mutex_);
@@ -467,17 +473,17 @@ void TransmissionManager::AliveChecker() {
       auto hdl = it->first;
       auto sp = hdl.lock();
 
-      if (!sp) {
-        it = ws_hdl_last_active_time_map_.erase(it);
-        continue;
-      }
-
       uint32_t last_active = it->second;
-      if (now - last_active > 10) {
-        LOG_INFO("Inactive websocket [{}] detected", sp.get());
+      if (!sp || now - last_active > 10) {
+        if (sp) {
+          LOG_INFO("Inactive websocket [{}] detected", sp.get());
+        }
 
-        ReleaseUserSession(hdl);
+        std::string user_id = ReleaseUserSession(hdl);
         it = ws_hdl_last_active_time_map_.erase(it);
+        if (!user_id.empty() && session_timeout_callback_) {
+          session_timeout_callback_(user_id);
+        }
       } else {
         ++it;
       }

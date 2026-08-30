@@ -59,6 +59,8 @@ class TransmissionManager {
       std::function<void(const std::string&, const std::string&,
                          const std::string&, bool)>
           callback);
+  void SetSessionTimeoutCallback(
+      std::function<void(const std::string&)> callback);
 
   bool ReleaseGuestFromTransmission(const std::string& guest_id);
   bool DisconnectTransmission(const std::string& transmission_id);
@@ -89,6 +91,7 @@ class TransmissionManager {
   std::function<void(const std::string&, const std::string&,
                      const std::string&, bool)>
       remote_control_session_callback_;
+  std::function<void(const std::string&)> session_timeout_callback_;
 
   std::thread ws_hdl_alive_checker_;
   std::recursive_mutex ws_hdl_alive_checker_mutex_;

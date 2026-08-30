@@ -195,6 +195,12 @@ SignalServer::SignalServer() {
       [this](const std::string& id, json msg) {
         SendMsg(transmission_manager_->GetWsHandle(id), msg);
       });
+  transmission_manager_->SetSessionTimeoutCallback(
+      [this](const std::string& device_id) {
+        if (presence_manager_) {
+          presence_manager_->OnLogout(device_id);
+        }
+      });
   admin_auth_ = std::make_unique<AdminAuth>();
   admin_controller_ = std::make_unique<AdminController>(
       admin_auth_.get(), presence_manager_.get(), transmission_manager_,
@@ -274,6 +280,12 @@ SignalServer::SignalServer(uint16_t port, std::string certs_dir,
       [this](const std::string& id, json msg) {
         SendMsg(transmission_manager_->GetWsHandle(id), msg);
       });
+  transmission_manager_->SetSessionTimeoutCallback(
+      [this](const std::string& device_id) {
+        if (presence_manager_) {
+          presence_manager_->OnLogout(device_id);
+        }
+      });
   admin_auth_ = std::make_unique<AdminAuth>();
   admin_controller_ = std::make_unique<AdminController>(
       admin_auth_.get(), presence_manager_.get(), transmission_manager_,
@@ -285,7 +297,12 @@ SignalServer::SignalServer(uint16_t port, std::string certs_dir,
   }
 }
 
-SignalServer::~SignalServer() { StopClientNetworkInfoWorker(); }
+SignalServer::~SignalServer() {
+  StopClientNetworkInfoWorker();
+  if (transmission_manager_) {
+    transmission_manager_->SetSessionTimeoutCallback({});
+  }
+}
 
 std::string SignalServer::GetClientIp(websocketpp::connection_hdl hdl) {
   try {
